@@ -162,3 +162,62 @@ public function index(IndexUsersRequest $request): AnonymousResourceCollection
     );
 }
 ```
+
+### Thin Jobs and Commands
+
+A queue job (or Artisan command) is an entrypoint — it must not contain `Process`/`Storage`/`DB`/decision logic. Move the work into a service and inject it into `handle()`.
+
+#### Incorrect
+
+```php
+// app/Jobs/ProcessVideoJob.php — ffmpeg orchestration inside the job
+class ProcessVideoJob implements ShouldQueue
+{
+    public function handle(AdvertModuleRepositoryInterface $modules): void
+    {
+        $module = $modules->find($this->moduleId);
+        $probe = Process::fromShellCommandline('ffprobe ... '.$this->videoPath)->run(); // side effect in entrypoint
+        // ... codec parsing, transcode decision, thumbnail, Storage::delete ...
+        $modules->update($this->moduleId, [...]);
+    }
+}
+```
+
+#### Correct
+
+```php
+// app/Jobs/ProcessVideoJob.php — thin adapter
+class ProcessVideoJob implements ShouldQueue
+{
+    use Queueable;
+
+    public function __construct(
+        protected int $moduleId,
+        protected string $videoPath,
+        protected string $dbPath,
+        protected string $filename,
+    ) {}
+
+    public function handle(VideoProcessingService $videoProcessingService): void
+    {
+        $videoProcessingService->processForModule(
+            $this->moduleId, $this->videoPath, $this->dbPath, $this->filename
+        );
+    }
+}
+
+// app/Services/Media/VideoProcessingService.php — owns Process/Storage/Log/decisions
+class VideoProcessingService
+{
+    public function __construct(
+        protected AdvertModuleRepositoryInterface $moduleRepository,
+    ) {}
+
+    public function processForModule(int $moduleId, string $videoPath, string $dbPath, string $filename): void
+    {
+        // ffprobe, codec/resolution decision, thumbnail, transcode, repository update
+    }
+}
+```
+
+The same shape applies to Artisan commands: `handle()` parses options, calls the service, prints the result. No `DB::transaction()` or chunk loops in the command.

@@ -37,7 +37,7 @@ When a domain grows too large, add focused collaborators under the same folder (
 1. Define `{Domain}RepositoryInterface` under `app/Repositories/{Domain}/Contracts/` with explicit return types
 2. Implement `{Domain}Repository` under `app/Repositories/{Domain}/` — Eloquent only, no business rules
 3. Bind `Interface → Implementation` in `AppServiceProvider` (or a dedicated provider)
-4. Inject the **interface** in services and controllers — never the concrete class
+4. Inject the **interface** in services and controllers — never the concrete class. Name the property as the camelCase of the type minus the `Interface` suffix (`SmartWifiOracleRepositoryInterface $oracleRepository`)
 5. Return models, collections, or paginators — resources stay in controllers
 
 ## Full Example
