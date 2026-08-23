@@ -24,6 +24,7 @@ class StorylineServiceTest extends TestCase
             'external_id' => '1',
             'text' => 'Запущена новая модель ИИ',
             'published_at' => now()->subHours(3),
+            'views' => 100,
             'embedding' => [1.0, 0.0],
         ]);
         Post::factory()->create([
@@ -31,6 +32,7 @@ class StorylineServiceTest extends TestCase
             'external_id' => '2',
             'text' => 'Вышла новая модель ИИ',
             'published_at' => now()->subHours(2),
+            'views' => 5000,
             'embedding' => [0.9, 0.1],
         ]);
         Post::factory()->create([
@@ -51,6 +53,41 @@ class StorylineServiceTest extends TestCase
         $this->assertSame(2, $storyline['post_count']);
         $this->assertContains('@channelA', $storyline['channels']);
         $this->assertContains('@channelB', $storyline['channels']);
+        // Compact mode: one representative post (max views), no full bodies.
+        $this->assertArrayHasKey('representative_post', $storyline);
+        $this->assertArrayNotHasKey('posts', $storyline);
+        $this->assertSame('@channelB', $storyline['representative_post']['channel_username']);
+        $this->assertSame(5000, $storyline['representative_post']['views']);
+    }
+
+    public function test_cluster_storylines_full_mode_returns_post_bodies(): void
+    {
+        $channelA = Source::factory()->create(['username' => '@channelA']);
+        $channelB = Source::factory()->create(['username' => '@channelB']);
+
+        Post::factory()->create([
+            'source_id' => $channelA->id,
+            'external_id' => '1',
+            'text' => 'Запущена новая модель ИИ',
+            'published_at' => now()->subHours(2),
+            'embedding' => [1.0, 0.0],
+        ]);
+        Post::factory()->create([
+            'source_id' => $channelB->id,
+            'external_id' => '2',
+            'text' => 'Вышла новая модель ИИ',
+            'published_at' => now()->subHour(),
+            'embedding' => [0.9, 0.1],
+        ]);
+
+        $service = new StorylineService(new PostRepository, $this->createMock(EmbeddingService::class));
+
+        $result = $service->clusterStorylines(days: 3, limit: 200, minClusterSize: 2, compact: false);
+
+        $storyline = $result['storylines'][0];
+        $this->assertArrayHasKey('posts', $storyline);
+        $this->assertArrayNotHasKey('representative_post', $storyline);
+        $this->assertCount(2, $storyline['posts']);
     }
 
     public function test_cluster_storylines_filters_by_query(): void

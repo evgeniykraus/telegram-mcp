@@ -505,6 +505,7 @@ class TelegramCollectionService
                     'fetched_count' => 0,
                     'next_offset_id' => null,
                     'has_more' => false,
+                    'last_seen_id' => null,
                     'thread_dialogue' => '',
                     'comments' => [],
                     'note' => 'No linked discussion group found for this channel',
@@ -544,6 +545,14 @@ class TelegramCollectionService
                 }
             }
 
+            $lastSeenId = null;
+            foreach ($commentsList as $comment) {
+                $id = (int) ($comment['id'] ?? 0);
+                if ($id > 0 && ($lastSeenId === null || $id > $lastSeenId)) {
+                    $lastSeenId = $id;
+                }
+            }
+
             return [
                 'channel' => $cleanUsername,
                 'post_id' => (int) $postId,
@@ -551,6 +560,7 @@ class TelegramCollectionService
                 'fetched_count' => count($commentsList),
                 'next_offset_id' => $nextOffsetId,
                 'has_more' => $nextOffsetId !== null,
+                'last_seen_id' => $lastSeenId,
                 'thread_dialogue' => $this->buildCommentDialogue($commentsList),
                 'comments' => $commentsList,
             ];
@@ -564,6 +574,7 @@ class TelegramCollectionService
                 'fetched_count' => 0,
                 'next_offset_id' => null,
                 'has_more' => false,
+                'last_seen_id' => null,
                 'thread_dialogue' => '',
                 'comments' => [],
                 'error' => $e->getMessage(),
@@ -637,9 +648,9 @@ class TelegramCollectionService
             $replyTo = $c['reply_to_msg_id'];
 
             if ($replyTo !== null && isset($idSet[$replyTo])) {
-                $threadDialogueLines[] = "  ↳ [{$c['time']}] {$authorBadge}{$c['text']}";
+                $threadDialogueLines[] = "  ↳ [#{$c['id']} {$c['time']}] {$authorBadge}{$c['text']}";
             } else {
-                $threadDialogueLines[] = "• [{$c['time']}] {$authorBadge}{$c['text']}";
+                $threadDialogueLines[] = "• [#{$c['id']} {$c['time']}] {$authorBadge}{$c['text']}";
             }
         }
 

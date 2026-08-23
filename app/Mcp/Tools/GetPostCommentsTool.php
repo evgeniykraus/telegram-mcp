@@ -35,6 +35,9 @@ class GetPostCommentsTool extends Tool
 
             $header = '### Comments for '.($result['channel'] ?? '').' (Post #'.($result['post_id'] ?? '').")\n";
             $header .= 'Total comments in channel: '.($result['total_comments'] ?? 0).' | Showing: '.($result['fetched_count'] ?? 0)."\n";
+            if (! empty($result['last_seen_id'])) {
+                $header .= 'last_seen_id: '.$result['last_seen_id'].' (use as since_id for the delta).'."\n";
+            }
             if (! empty($result['has_more'])) {
                 $header .= 'More comments available — continue with offset_id='.($result['next_offset_id'] ?? '')."\n";
             }

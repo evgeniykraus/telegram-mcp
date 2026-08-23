@@ -634,6 +634,49 @@ class AnalyticsServerTest extends TestCase
         $response->assertSee('@newschan');
     }
 
+    public function test_latest_posts_tool_since_id_filter(): void
+    {
+        $mockService = $this->createMock(TelegramCollectionService::class);
+        $mockService->method('fetchRecentPosts')->willReturn([
+            [
+                'id' => '101',
+                'external_id' => '101',
+                'channel_username' => '@newschan',
+                'url' => 'https://t.me/newschan/101',
+                'published_at' => now()->subMinutes(10)->toDateTimeString(),
+                'text' => 'Старый пост',
+                'views' => 100,
+                'forwards' => 0,
+                'reactions' => 0,
+                'er' => 0.0,
+                'content_score' => 0.0,
+            ],
+            [
+                'id' => '102',
+                'external_id' => '102',
+                'channel_username' => '@newschan',
+                'url' => 'https://t.me/newschan/102',
+                'published_at' => now()->subMinutes(5)->toDateTimeString(),
+                'text' => 'Новый пост',
+                'views' => 200,
+                'forwards' => 0,
+                'reactions' => 0,
+                'er' => 0.0,
+                'content_score' => 0.0,
+            ],
+        ]);
+        $this->app->instance(TelegramCollectionService::class, $mockService);
+
+        $response = AnalyticsServer::tool(LatestPostsTool::class, [
+            'channels' => '@newschan',
+            'since_id' => 101,
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('Новый пост');
+        $response->assertDontSee('Старый пост');
+    }
+
     public function test_get_post_comments_tool_shows_pagination_hint(): void
     {
         $mockService = $this->createMock(TelegramCollectionService::class);
@@ -644,6 +687,7 @@ class AnalyticsServerTest extends TestCase
             'fetched_count' => 200,
             'next_offset_id' => 45,
             'has_more' => true,
+            'last_seen_id' => 200,
             'thread_dialogue' => '• [12:00] Комментарий',
             'comments' => [],
         ]);
@@ -658,6 +702,7 @@ class AnalyticsServerTest extends TestCase
         $response->assertOk();
         $response->assertSee('More comments available');
         $response->assertSee('offset_id=45');
+        $response->assertSee('last_seen_id: 200');
     }
 
     public function test_cluster_storylines_tool(): void
@@ -665,6 +710,7 @@ class AnalyticsServerTest extends TestCase
         $mockService = $this->createMock(StorylineService::class);
         $mockService->method('clusterStorylines')->willReturn([
             'days' => 3,
+            'since_hours' => 2,
             'posts_scanned' => 4,
             'storylines_count' => 1,
             'storylines' => [[
@@ -674,16 +720,27 @@ class AnalyticsServerTest extends TestCase
                 'post_count' => 4,
                 'first_seen_at' => now()->toDateTimeString(),
                 'last_seen_at' => now()->toDateTimeString(),
-                'posts' => [],
+                'representative_post' => [
+                    'channel_username' => '@a',
+                    'url' => 'https://t.me/a/1',
+                    'published_at' => now()->toDateTimeString(),
+                    'text_preview' => 'Самый просматриваемый анонс',
+                    'views' => 50000,
+                    'forwards' => 1200,
+                ],
             ]],
         ]);
         $this->app->instance(StorylineService::class, $mockService);
 
-        $response = AnalyticsServer::tool(ClusterStorylinesTool::class, []);
+        $response = AnalyticsServer::tool(ClusterStorylinesTool::class, [
+            'since_hours' => 2,
+        ]);
 
         $response->assertOk();
         $response->assertSee('Один и тот же анонс');
         $response->assertSee('corroborated');
+        $response->assertSee('representative_post');
+        $response->assertSee('Самый просматриваемый анонс');
     }
 
     public function test_comment_intelligence_tool(): void

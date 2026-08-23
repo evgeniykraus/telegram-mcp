@@ -26,11 +26,16 @@ class LatestPostsTool extends Tool
 
         $limit = max(1, min((int) ($request->get('limit') ?? 100), 500));
         $sinceHours = $request->get('since_hours') !== null ? (int) $request->get('since_hours') : null;
+        $sinceId = $request->get('since_id') !== null ? (int) $request->get('since_id') : null;
         $since = $sinceHours !== null ? Carbon::now()->subHours($sinceHours) : null;
         $fullText = (bool) ($request->get('full_text') ?? false);
         $previewLength = max(50, (int) ($request->get('preview_length') ?? 200));
 
         $posts = $collectionService->fetchRecentPosts($channels, $since, $limit);
+
+        if ($sinceId !== null) {
+            $posts = array_values(array_filter($posts, fn (array $p) => (int) ($p['external_id'] ?? 0) > $sinceId));
+        }
 
         $resultsData = $fullText
             ? array_map(fn ($p) => GlobalPostDto::fromArray($p)->toArray(), $posts)
@@ -41,6 +46,7 @@ class LatestPostsTool extends Tool
         return Response::structured([
             'channels' => $channels,
             'since_hours' => $sinceHours,
+            'since_id' => $sinceId,
             'count' => count($resultsData),
             'posts' => $resultsData,
         ]);
@@ -57,6 +63,8 @@ class LatestPostsTool extends Tool
                 ->required(),
             'since_hours' => $schema->integer()
                 ->description('Optional: only return posts published in the last N hours (default: no time filter)'),
+            'since_id' => $schema->integer()
+                ->description('Optional: only return posts with a message ID greater than this (per-channel monotonic increment — for deltas). Best with a single channel.'),
             'limit' => $schema->integer()
                 ->description('Maximum number of posts to fetch per channel (default: 100, max: 500)'),
             'full_text' => $schema->boolean()

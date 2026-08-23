@@ -23,8 +23,11 @@ class StorylineService
         int $limit = 200,
         int $minClusterSize = 2,
         float $similarityThreshold = 0.75,
+        ?int $sinceHours = null,
+        bool $compact = true,
     ): array {
-        $posts = $this->postRepository->getRecentAcrossSources(Carbon::now()->subDays($days), $limit);
+        $since = $sinceHours !== null ? Carbon::now()->subHours($sinceHours) : Carbon::now()->subDays($days);
+        $posts = $this->postRepository->getRecentAcrossSources($since, $limit);
 
         if ($query !== null) {
             $posts = $posts->filter(fn (Post $post) => $this->matchesQuery($query, (string) $post->text));
@@ -73,7 +76,7 @@ class StorylineService
         $storylines = [];
         foreach ($clusters as $cluster) {
             if (count($cluster['posts']) >= $minClusterSize) {
-                $storylines[] = $this->buildStoryline($cluster['posts']);
+                $storylines[] = $this->buildStoryline($cluster['posts'], $compact);
             }
         }
 
@@ -91,6 +94,7 @@ class StorylineService
 
         return [
             'days' => $days,
+            'since_hours' => $sinceHours,
             'posts_scanned' => count($embedded),
             'storylines_count' => count($storylines),
             'storylines' => array_values($storylines),
@@ -101,7 +105,7 @@ class StorylineService
      * @param  list<Post>  $posts
      * @return array<string, mixed>
      */
-    private function buildStoryline(array $posts): array
+    private function buildStoryline(array $posts, bool $compact): array
     {
         usort($posts, fn (Post $a, Post $b): int => strcmp(
             (string) ($a->published_at?->toDateTimeString() ?? ''),
@@ -110,38 +114,63 @@ class StorylineService
 
         $channels = [];
         $items = [];
+        $representativePost = null;
+        $representativeUsername = '';
+        $maxViews = -1;
 
         foreach ($posts as $post) {
-            $username = (string) ($post->source?->username ?? '');
-            $username = $username !== '' && ! str_starts_with($username, '@') ? '@'.$username : $username;
+            $username = $this->channelUsername($post);
             $channels[$username] = true;
+            $views = (int) $post->views;
+
+            if ($views > $maxViews) {
+                $maxViews = $views;
+                $representativePost = $post;
+                $representativeUsername = $username;
+            }
 
             $items[] = [
                 'channel_username' => $username,
                 'url' => $post->url,
                 'published_at' => $post->published_at?->toDateTimeString(),
                 'text_preview' => mb_substr((string) $post->text, 0, 160),
-                'views' => (int) $post->views,
+                'views' => $views,
                 'forwards' => (int) $post->forwards,
             ];
         }
 
-        $headlinePost = $posts[0];
-        foreach ($posts as $post) {
-            if ((int) $post->views > (int) $headlinePost->views) {
-                $headlinePost = $post;
-            }
-        }
+        $headlinePost = $representativePost ?? $posts[0];
 
-        return [
+        $storyline = [
             'headline' => mb_substr((string) $headlinePost->text, 0, 200),
             'channels' => array_keys($channels),
             'corroborated' => count($channels) >= 2,
             'post_count' => count($posts),
             'first_seen_at' => $posts[0]->published_at?->toDateTimeString(),
             'last_seen_at' => $posts[count($posts) - 1]->published_at?->toDateTimeString(),
-            'posts' => $items,
         ];
+
+        if ($compact) {
+            $storyline['representative_post'] = [
+                'channel_username' => $representativeUsername,
+                'url' => $headlinePost->url,
+                'published_at' => $headlinePost->published_at?->toDateTimeString(),
+                'text_preview' => mb_substr((string) $headlinePost->text, 0, 160),
+                'views' => (int) $headlinePost->views,
+                'forwards' => (int) $headlinePost->forwards,
+            ];
+        } else {
+            $storyline['posts'] = $items;
+        }
+
+        return $storyline;
+    }
+
+    private function channelUsername(Post $post): string
+    {
+        $username = (string) ($post->source?->username ?? '');
+
+        return $username !== '' && ! str_starts_with($username, '@') ? '@'.$username : $username;
     }
 
     private function matchesQuery(string $query, string $text): bool

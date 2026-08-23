@@ -205,25 +205,65 @@ class AnalyticsService
         }
 
         // ponytail: keyword heuristics for RU comment mining; swap for NER/LLM
-        // when the channel set grows past a hand-tuned list.
-        $districtKeywords = ['район', 'р-н', 'центр', 'западный', 'восточный', 'северный', 'южный', 'чмр', 'смр', 'юмр', 'фмр', 'гмр', 'кмр'];
-        $complaintKeywords = ['проблем', 'сбой', 'не работает', 'ошибк', 'ужас', 'плохо', 'бед', 'не могу', 'вору', 'обман', 'кинул', 'дорого', 'тормоз', 'висит', 'отключ', 'перебо', 'жалоб', 'не пришл', 'не достав', 'сломан', 'баг'];
+        // when the channel set grows past a hand-tuned list. Variants map to a
+        // canonical readable label so stop-words like "район" never leak in.
+        $districtMap = [
+            'фмр' => 'ФМР (Фестивальный)',
+            'фестивальный' => 'ФМР (Фестивальный)',
+            'кмр' => 'КМР (Комсомольский)',
+            'комсомольский' => 'КМР (Комсомольский)',
+            'смр' => 'СМР (Славянский)',
+            'славянский' => 'СМР (Славянский)',
+            'юмр' => 'ЮМР (Юбилейный)',
+            'юбилейный' => 'ЮМР (Юбилейный)',
+            'гмр' => 'ГМР (Гидростроителей)',
+            'гидростроителей' => 'ГМР (Гидростроителей)',
+            'черёмушки' => 'Черёмушки',
+            'черемушки' => 'Черёмушки',
+            'пашковк' => 'Пашковка',
+            'пашковск' => 'Пашковка',
+            'центр' => 'Центр',
+            'центральный' => 'Центр',
+        ];
+        $complaintMap = [
+            'проблем' => 'Проблемы/неисправности',
+            'сбой' => 'Сбои в работе',
+            'не работает' => 'Не работает (сервис)',
+            'ошибк' => 'Ошибки',
+            'ужас' => 'Крайне негативная оценка',
+            'плохо' => 'Негативная оценка',
+            'бед' => 'Беды/ЧП',
+            'не могу' => 'Невозможно выполнить действие',
+            'вору' => 'Обвинения в воровстве',
+            'обман' => 'Обвинения в обмане',
+            'кинул' => 'Обвинения в кидалове',
+            'дорого' => 'Жалобы на цену',
+            'тормоз' => 'Зависания/тормоза',
+            'висит' => 'Зависания/тормоза',
+            'отключ' => 'Отключения',
+            'перебо' => 'Перебои',
+            'жалоб' => 'Жалобы',
+            'не пришл' => 'Не пришло (недоставка)',
+            'не достав' => 'Проблемы доставки',
+            'сломан' => 'Сломано',
+            'баг' => 'Баг/дефект',
+        ];
 
         $districts = [];
         $complaints = [];
         $complaintExamples = [];
 
         foreach ($texts as $text) {
-            foreach ($districtKeywords as $keyword) {
-                if (str_contains($text, $keyword)) {
-                    $districts[$keyword] = ($districts[$keyword] ?? 0) + 1;
+            foreach ($districtMap as $variant => $label) {
+                if (str_contains($text, $variant)) {
+                    $districts[$label] = ($districts[$label] ?? 0) + 1;
                 }
             }
 
-            foreach ($complaintKeywords as $keyword) {
+            foreach ($complaintMap as $keyword => $label) {
                 if (str_contains($text, $keyword)) {
-                    $complaints[$keyword] = ($complaints[$keyword] ?? 0) + 1;
-                    $complaintExamples[$keyword][] = mb_substr($text, 0, 120);
+                    $complaints[$label] = ($complaints[$label] ?? 0) + 1;
+                    $complaintExamples[$label][] = mb_substr($text, 0, 120);
                 }
             }
         }

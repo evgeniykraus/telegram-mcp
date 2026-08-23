@@ -138,7 +138,7 @@ class AnalyticsServiceTest extends TestCase
 
         $this->assertSame(2, $result['analyzed_comments']);
         $this->assertSame(1, $result['top_districts'][0]['mentions'] ?? null);
-        $this->assertSame('центр', $result['top_districts'][0]['district'] ?? null);
+        $this->assertSame('Центр', $result['top_districts'][0]['district'] ?? null);
         $this->assertNotEmpty($result['dominant_complaints']);
     }
 }
