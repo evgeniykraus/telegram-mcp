@@ -7,26 +7,20 @@ use Illuminate\Support\Facades\Log;
 
 class EmbeddingService
 {
-    private string $baseUrl;
-
-    private string $apiKey;
-
-    private string $model;
-
-    private int $dimension;
-
-    private int $batchSize;
-
-    private int $timeout;
-
-    public function __construct()
-    {
-        $this->baseUrl = rtrim((string) config('analytics.embeddings.base_url', 'https://api.openai.com/v1'), '/');
-        $this->apiKey = (string) config('analytics.embeddings.api_key', '');
-        $this->model = (string) config('analytics.embeddings.model', 'bge-m3');
-        $this->dimension = (int) config('analytics.embeddings.dimension', 1024);
-        $this->batchSize = (int) config('analytics.embeddings.batch_size', 50);
-        $this->timeout = (int) config('analytics.embeddings.timeout', 30);
+    public function __construct(
+        private string $baseUrl = '',
+        private string $apiKey = '',
+        private string $model = 'bge-m3',
+        private int $dimension = 1024,
+        private int $batchSize = 50,
+        private int $timeout = 30,
+    ) {
+        $this->baseUrl = $baseUrl !== '' ? rtrim($baseUrl, '/') : rtrim((string) config('analytics.embeddings.base_url', 'https://api.openai.com/v1'), '/');
+        $this->apiKey = $apiKey !== '' ? $apiKey : (string) config('analytics.embeddings.api_key', '');
+        $this->model = $model !== 'bge-m3' ? $model : (string) config('analytics.embeddings.model', 'bge-m3');
+        $this->dimension = $dimension !== 1024 ? $dimension : (int) config('analytics.embeddings.dimension', 1024);
+        $this->batchSize = $batchSize !== 50 ? $batchSize : (int) config('analytics.embeddings.batch_size', 50);
+        $this->timeout = $timeout !== 30 ? $timeout : (int) config('analytics.embeddings.timeout', 30);
     }
 
     /**

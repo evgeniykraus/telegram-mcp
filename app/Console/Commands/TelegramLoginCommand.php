@@ -7,8 +7,6 @@ use danog\MadelineProto\RPCError\SessionPasswordNeededError;
 use danog\MadelineProto\RPCErrorException;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
-use PHPCore\MadelineProto\Exceptions\NeedTwoFactorAuthException;
-use PHPCore\MadelineProto\Exceptions\SignUpNeededException;
 
 class TelegramLoginCommand extends Command
 {
@@ -57,10 +55,10 @@ class TelegramLoginCommand extends Command
         }
 
         try {
-            $madelineProto = $factory->get();
+            $api = $factory->get($sessionFile);
 
             $this->line('Sending login code...');
-            $madelineProto->phoneLogin($phoneNumber);
+            $api->phoneLogin($phoneNumber);
 
             $code = (string) $this->ask('Enter confirmation code received in Telegram / SMS:');
             if (trim($code) === '') {
@@ -70,24 +68,24 @@ class TelegramLoginCommand extends Command
             }
 
             try {
-                $madelineProto->completePhoneLogin($code);
-            } catch (NeedTwoFactorAuthException|SessionPasswordNeededError $e) {
+                $api->completePhoneLogin($code);
+            } catch (SessionPasswordNeededError $e) {
                 $this->info('2FA Cloud Password is required.');
                 $password = (string) $this->secret('Enter your 2FA Cloud Password:');
-                $madelineProto->submit2FA($password);
+                $api->submit2FA($password);
             } catch (RPCErrorException $e) {
                 if ($e->rpc === 'SESSION_PASSWORD_NEEDED') {
                     $this->info('2FA Cloud Password is required.');
                     $password = (string) $this->secret('Enter your 2FA Cloud Password:');
-                    $madelineProto->submit2FA($password);
+                    $api->submit2FA($password);
+                } elseif ($e->rpc === 'SIGN_UP_REQUIRED') {
+                    $this->info('New account sign up required.');
+                    $firstName = (string) $this->ask('First name:');
+                    $lastName = (string) $this->ask('Last name (optional):', '');
+                    $api->completeSignUp($firstName, $lastName);
                 } else {
                     throw $e;
                 }
-            } catch (SignUpNeededException $e) {
-                $this->info('New account sign up required.');
-                $firstName = (string) $this->ask('First name:');
-                $lastName = (string) $this->ask('Last name (optional):', '');
-                $madelineProto->completeSignUp($firstName, $lastName);
             }
 
             $this->info('✓ Telegram account successfully authorized and session saved!');
@@ -107,9 +105,12 @@ class TelegramLoginCommand extends Command
 
     private function cleanSession(string $sessionFile): void
     {
-        $dir = storage_path('app/telegram');
+        $path = storage_path("app/telegram/{$sessionFile}");
 
-        File::deleteDirectory($dir);
-        File::makeDirectory($dir, 0755, true, true);
+        if (is_dir($path)) {
+            File::deleteDirectory($path);
+        } elseif (file_exists($path)) {
+            File::delete($path);
+        }
     }
 }

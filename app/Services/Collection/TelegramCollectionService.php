@@ -21,7 +21,6 @@ class TelegramCollectionService
         private readonly CustomMadelineProtoFactory $madelineProtoFactory,
         private readonly SourceRepositoryInterface $sourceRepository,
         private readonly PostRepositoryInterface $postRepository,
-        private readonly TelegramWebCollectorService $webCollector,
     ) {}
 
     public function collectChannel(
@@ -48,8 +47,32 @@ class TelegramCollectionService
         $run->save();
 
         try {
-            $madelineProto = $this->madelineProtoFactory->get();
-            $api = $madelineProto->getClient();
+            $api = $this->madelineProtoFactory->get();
+
+            // Fetch and update channel metadata (subscribers, title, description)
+            try {
+                $fullInfo = $api->channels->getFullChannel(['channel' => $cleanUsername]);
+                $participantsCount = $fullInfo['full_chat']['participants_count'] ?? null;
+                $about = $fullInfo['full_chat']['about'] ?? null;
+                $chatInfo = $fullInfo['chats'][0] ?? [];
+                $title = $chatInfo['title'] ?? null;
+
+                $channelUpdates = [];
+                if ($participantsCount !== null) {
+                    $channelUpdates['subscribers_count'] = (int) $participantsCount;
+                }
+                if (! empty($title)) {
+                    $channelUpdates['title'] = (string) $title;
+                }
+                if (! empty($about)) {
+                    $channelUpdates['description'] = (string) $about;
+                }
+                if (! empty($channelUpdates)) {
+                    $this->sourceRepository->update($source, $channelUpdates);
+                }
+            } catch (\Throwable $infoEx) {
+                Log::debug("Could not fetch full channel metadata for {$cleanUsername}: {$infoEx->getMessage()}");
+            }
 
             $history = $api->messages->getHistory([
                 'peer' => $cleanUsername,
@@ -101,24 +124,6 @@ class TelegramCollectionService
 
             return $run;
         } catch (\Throwable $e) {
-            Log::info("MTProto collection failed for {$cleanUsername} ({$e->getMessage()}), attempting Web Collector fallback...");
-
-            if ($this->webCollector !== null) {
-                try {
-                    $webResult = $this->webCollector->collectChannel($cleanUsername, $limit, $since);
-                    $run->update([
-                        'completed_at' => now(),
-                        'posts_fetched' => $webResult['posts_collected'],
-                        'posts_saved' => $webResult['posts_collected'],
-                        'status' => CollectionRunStatus::Success,
-                    ]);
-
-                    return $run;
-                } catch (\Throwable $webEx) {
-                    Log::error("Web Collector fallback failed for {$cleanUsername}: {$webEx->getMessage()}");
-                }
-            }
-
             Log::error("Failed to collect channel {$cleanUsername}: ".$e->getMessage(), [
                 'exception' => $e,
             ]);
@@ -256,8 +261,7 @@ class TelegramCollectionService
         );
 
         try {
-            $madelineProto = $this->madelineProtoFactory->get();
-            $api = $madelineProto->getClient();
+            $api = $this->madelineProtoFactory->get();
 
             $res = $api->channels->getMessages([
                 'channel' => $cleanUsername,
@@ -292,8 +296,7 @@ class TelegramCollectionService
         $cleanUsername = TelegramHelper::normalizeUsername($channelUsername) ?? $channelUsername;
 
         try {
-            $madelineProto = $this->madelineProtoFactory->get();
-            $api = $madelineProto->getClient();
+            $api = $this->madelineProtoFactory->get();
 
             $disc = $api->messages->getDiscussionMessage([
                 'peer' => $cleanUsername,
@@ -311,7 +314,6 @@ class TelegramCollectionService
                 ];
             }
 
-            $chatId = $chat['id'];
             $unreadCount = (int) ($disc['unread_count'] ?? 0);
 
             $replies = $api->messages->getReplies([
@@ -347,27 +349,12 @@ class TelegramCollectionService
                 }
             }
 
-            // Build Tree Dialogue
-            $idSet = array_flip(array_column($commentsList, 'id'));
-            $threadDialogueLines = [];
-
-            foreach ($commentsList as $c) {
-                $authorBadge = $c['is_author'] ? '👑 [AUTHOR] ' : '';
-                $replyTo = $c['reply_to_msg_id'];
-
-                if ($replyTo !== null && isset($idSet[$replyTo])) {
-                    $threadDialogueLines[] = "  ↳ [{$c['time']}] {$authorBadge}{$c['text']}";
-                } else {
-                    $threadDialogueLines[] = "• [{$c['time']}] {$authorBadge}{$c['text']}";
-                }
-            }
-
             return [
                 'channel' => $cleanUsername,
                 'post_id' => (int) $postId,
                 'total_comments' => $unreadCount > 0 ? $unreadCount : count($commentsList),
                 'fetched_count' => count($commentsList),
-                'thread_dialogue' => implode("\n", $threadDialogueLines),
+                'thread_dialogue' => $this->buildCommentDialogue($commentsList),
                 'comments' => $commentsList,
             ];
         } catch (\Throwable $e) {
@@ -382,5 +369,27 @@ class TelegramCollectionService
                 'error' => $e->getMessage(),
             ];
         }
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $commentsList
+     */
+    private function buildCommentDialogue(array $commentsList): string
+    {
+        $idSet = array_flip(array_column($commentsList, 'id'));
+        $threadDialogueLines = [];
+
+        foreach ($commentsList as $c) {
+            $authorBadge = $c['is_author'] ? '👑 [AUTHOR] ' : '';
+            $replyTo = $c['reply_to_msg_id'];
+
+            if ($replyTo !== null && isset($idSet[$replyTo])) {
+                $threadDialogueLines[] = "  ↳ [{$c['time']}] {$authorBadge}{$c['text']}";
+            } else {
+                $threadDialogueLines[] = "• [{$c['time']}] {$authorBadge}{$c['text']}";
+            }
+        }
+
+        return implode("\n", $threadDialogueLines);
     }
 }

@@ -7,7 +7,6 @@ use App\Factories\CustomMadelineProtoFactory;
 use App\Repositories\Post\Contracts\PostRepositoryInterface;
 use App\Repositories\Source\Contracts\SourceRepositoryInterface;
 use App\Services\Collection\TelegramCollectionService;
-use App\Services\Collection\TelegramWebCollectorService;
 use Tests\TestCase;
 
 class TelegramCollectionServiceTest extends TestCase
@@ -21,9 +20,8 @@ class TelegramCollectionServiceTest extends TestCase
         $factory = $this->createMock(CustomMadelineProtoFactory::class);
         $sourceRepo = $this->createMock(SourceRepositoryInterface::class);
         $postRepo = $this->createMock(PostRepositoryInterface::class);
-        $webCollector = $this->createMock(TelegramWebCollectorService::class);
 
-        $this->service = new TelegramCollectionService($factory, $sourceRepo, $postRepo, $webCollector);
+        $this->service = new TelegramCollectionService($factory, $sourceRepo, $postRepo);
     }
 
     public function test_detect_ad_patterns(): void

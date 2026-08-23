@@ -11,7 +11,7 @@
         "laravel/mcp": "^0.8",
         "laravel/sail": "^1.63",
         "laravel/tinker": "^3.0",
-        "php-core/laravel-madeline-proto": "^0.0.1"
+        "danog/madelineproto": "^8.7"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
