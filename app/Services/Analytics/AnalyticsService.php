@@ -151,6 +151,16 @@ class AnalyticsService
             if ($post !== null) {
                 $channel = $post->source?->username;
                 $externalId = $post->external_id;
+            } else {
+                return [
+                    'channel' => null,
+                    'post_id' => null,
+                    'total_comments' => 0,
+                    'fetched_count' => 0,
+                    'thread_dialogue' => '',
+                    'comments' => [],
+                    'error' => "Post #{$idOrUrl} not found locally — pass the full URL (https://t.me/channel/{$idOrUrl}) to fetch comments on the fly.",
+                ];
             }
         } else {
             $url = (string) $idOrUrl;
@@ -162,7 +172,11 @@ class AnalyticsService
 
         if ($channel === null || $externalId === null || $this->collectionService === null) {
             return [
+                'channel' => $channel,
+                'post_id' => $externalId !== null ? (int) $externalId : null,
                 'total_comments' => 0,
+                'fetched_count' => 0,
+                'thread_dialogue' => '',
                 'comments' => [],
                 'error' => 'Unable to determine channel or post ID from input.',
             ];
@@ -245,9 +259,20 @@ class AnalyticsService
         })->sortByDesc('performance_score')->values()->all();
     }
 
-    public function getBenchmark(int $days = 30, string $category = 'all'): BenchmarkDto
+    public function getBenchmark(int $days = 30, string $category = 'all', ?string $ownChannel = null): BenchmarkDto
     {
-        $benchmarkData = $this->analyticsRepository->getCategoryBenchmark($category, $days);
+        $ownUsername = null;
+        if ($ownChannel !== null) {
+            $ownSource = $this->sourceRepository->findByUsername(TelegramHelper::normalizeUsername($ownChannel) ?? $ownChannel);
+            if ($ownSource !== null) {
+                $ownUsername = $ownSource->username;
+                if ($category === 'all' && $ownSource->category) {
+                    $category = $ownSource->category;
+                }
+            }
+        }
+
+        $benchmarkData = $this->analyticsRepository->getCategoryBenchmark($category, $days, $ownUsername);
 
         $ownEr = round((float) $benchmarkData['own_avg_er'], 4);
         $compEr = round((float) $benchmarkData['competitor_avg_er'], 4);
@@ -288,7 +313,7 @@ class AnalyticsService
         if ($cleanUsername !== null) {
             $source = $this->sourceRepository->findByUsername($cleanUsername);
             if ($source && $source->category) {
-                $benchmark = $this->getBenchmark($days, $source->category)->toArray();
+                $benchmark = $this->getBenchmark($days, $source->category, $source->username)->toArray();
             }
         }
 
@@ -398,7 +423,8 @@ class AnalyticsService
         float $minMultiplier = 2.0,
         int $days = 14,
         ?string $channel = null,
-        int $limit = 20
+        int $limit = 20,
+        string $dimension = 'views'
     ): array {
         $sourceId = null;
         if ($channel !== null) {
@@ -411,7 +437,7 @@ class AnalyticsService
             $sourceId = $source->id;
         }
 
-        $outliers = $this->analyticsRepository->getOutlierPosts($minMultiplier, $days, $sourceId, $limit);
+        $outliers = $this->analyticsRepository->getOutlierPosts($minMultiplier, $days, $sourceId, $limit, $dimension);
 
         return $outliers->map(function ($post): OutlierPostDto {
             $rawText = (string) ($post->text ?? '');
@@ -432,8 +458,10 @@ class AnalyticsService
                 'forwards' => (int) $post->forwards,
                 'channel_median_views' => round((float) ($post->getAttribute('channel_median_views') ?? 0.0), 2),
                 'multiplier' => round((float) ($post->getAttribute('multiplier') ?? 0.0), 2),
+                'peak_multiplier' => round((float) ($post->getAttribute('peak_multiplier') ?? 0.0), 2),
                 'views_multiplier' => round((float) ($post->getAttribute('views_multiplier') ?? 0.0), 2),
                 'engagement_multiplier' => round((float) ($post->getAttribute('engagement_multiplier') ?? 0.0), 2),
+                'er_multiplier' => round((float) ($post->getAttribute('er_multiplier') ?? 0.0), 2),
                 'er' => round((float) ($post->er ?? 0.0), 4),
                 'outlier_type' => (string) ($post->getAttribute('outlier_type') ?? 'viral_views'),
                 'format_type' => $post->format_type,
@@ -559,17 +587,35 @@ class AnalyticsService
 
             // Hook types
             $firstLine = $paragraphs[0] ?? '';
+            $matchedHardHook = false;
             if (preg_match('/^(?:🔖|📖|📄|📊|💡|🔥|⚡️|🎸|🐱|🐈|🚀|🎯|✨)/u', $firstLine)) {
                 $hookTypes['emoji_badge_heading'] = 'Эмодзи-плашка в начале заголовка (🔖 / ⚡️ / 🎸 / 💡)';
+                $matchedHardHook = true;
             }
             if (preg_match('/^(?:Кейс|Отчёт|Инструкция|Разбор|Апдейт|Дайджест|Обзор|Новость)/ui', $firstLine)) {
                 $hookTypes['case_report_heading'] = 'Рубрикаторы («Кейс: ...», «Отчёт: ...», «Инструкция: ...»)';
+                $matchedHardHook = true;
             }
             if (preg_match('/\d+/u', $firstLine) && (str_contains($firstLine, '₽') || str_contains($firstLine, '$') || str_contains($firstLine, 'тысяч') || str_contains($firstLine, '%'))) {
                 $hookTypes['numbers_and_money'] = 'Числовые факты и метрики в первой строке';
+                $matchedHardHook = true;
             }
-            if (preg_match('/^(?:Чиним|Поднимаем|Даем|Экономим|Делаем|Как|Почему|Разбираем)/ui', $firstLine)) {
+            if (preg_match('/^(?:Чиним|Поднимаем|Даем|Экономим|Делаем|Как|Почему|Разбираем|Собираем|Настраиваем|Запускаем)/ui', $firstLine)) {
                 $hookTypes['action_verb_hook'] = 'Глагольный хук действия в заголовке («Чиним...», «Поднимаем...», «Экономим...»)';
+                $matchedHardHook = true;
+            }
+
+            // Structural fallback so text posts without hard-coded markers still yield a hook type
+            if (! $matchedHardHook) {
+                if (preg_match('/\?\s*$/u', $firstLine)) {
+                    $hookTypes['question_headline'] = 'Вопрос в заголовке (вовлечение)';
+                } elseif (preg_match('/^\d/u', $firstLine)) {
+                    $hookTypes['numeric_opener'] = 'Числовой зачин (метрика в заголовке)';
+                } elseif (mb_strlen($firstLine) > 80) {
+                    $hookTypes['longform_opener'] = 'Длинный первый абзац (лонгрид-зачин)';
+                } else {
+                    $hookTypes['short_headline'] = 'Короткий ёмкий заголовок';
+                }
             }
 
             // CTA types

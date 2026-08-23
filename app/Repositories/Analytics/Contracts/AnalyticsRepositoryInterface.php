@@ -30,10 +30,10 @@ interface AnalyticsRepositoryInterface
     /**
      * @return array<string, mixed>
      */
-    public function getCategoryBenchmark(string $category, int $sinceDays = 30): array;
+    public function getCategoryBenchmark(string $category, int $sinceDays = 30, ?string $ownUsername = null): array;
 
     /**
      * @return Collection<int, Post>
      */
-    public function getOutlierPosts(float $minMultiplier = 2.0, int $sinceDays = 14, ?int $sourceId = null, int $limit = 20): Collection;
+    public function getOutlierPosts(float $minMultiplier = 2.0, int $sinceDays = 14, ?int $sourceId = null, int $limit = 20, string $dimension = 'views'): Collection;
 }

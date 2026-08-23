@@ -12,7 +12,7 @@ use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Tool;
 
-#[Description('Detect viral anomaly outlier posts that achieved 2x-10x+ views relative to their channel median. Essential for identifying high-performing hooks and breakout angles.')]
+#[Description('Detect viral anomaly outlier posts whose performance on a chosen dimension (views by default) exceeds their channel median. Returns the chosen-dimension multiplier plus peak/views/engagement/ER multipliers for context. Essential for identifying high-performing hooks and breakout angles.')]
 class FindOutliersTool extends Tool
 {
     public function handle(Request $request, AnalyticsService $analyticsService): Response|ResponseFactory
@@ -21,12 +21,14 @@ class FindOutliersTool extends Tool
         $days = (int) ($request->get('days') ?? $request->get('since_days') ?? 14);
         $channel = $request->get('channel') ? TelegramHelper::normalizeUsername((string) $request->get('channel')) : null;
         $limit = (int) ($request->get('limit') ?? 10);
+        $dimension = (string) ($request->get('dimension') ?? 'views');
 
-        $outliers = $analyticsService->getViralOutliers($minMultiplier, $days, $channel, $limit);
+        $outliers = $analyticsService->getViralOutliers($minMultiplier, $days, $channel, $limit, $dimension);
 
         return Response::structured([
             'count' => count($outliers),
             'min_multiplier' => $minMultiplier,
+            'dimension' => $dimension,
             'period_days' => $days,
             'channel_filter' => $channel,
             'outliers' => array_map(fn ($o) => $o->toArray(), $outliers),
@@ -40,7 +42,11 @@ class FindOutliersTool extends Tool
     {
         return [
             'min_multiplier' => $schema->number()
-                ->description('Minimum performance multiplier vs channel median views (e.g. 2.0 = post had 2x channel median, 3.5 = 3.5x). Default: 2.0'),
+                ->description('Minimum performance multiplier vs channel median on the chosen dimension (e.g. 2.0 = 2x median). Default: 2.0'),
+            'dimension' => $schema->string()
+                ->description('Dimension used for the multiplier threshold and ranking: "views", "engagement", "er", or "any" (max of the three). Default: "views"')
+                ->enum(['views', 'engagement', 'er', 'any'])
+                ->default('views'),
             'days' => $schema->integer()
                 ->description('Lookback period in days to analyze (default: 14)'),
             'channel' => $schema->string()

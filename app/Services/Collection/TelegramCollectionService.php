@@ -74,18 +74,21 @@ class TelegramCollectionService
                 Log::debug("Could not fetch full channel metadata for {$cleanUsername}: {$infoEx->getMessage()}");
             }
 
-            $history = $api->messages->getHistory([
-                'peer' => $cleanUsername,
-                'limit' => min($limit, (int) config('analytics.collection.max_limit', 500)),
-                'offset_id' => 0,
-                'offset_date' => 0,
-                'add_offset' => 0,
-                'max_id' => 0,
-                'min_id' => 0,
-                'hash' => 0,
-            ]);
+            $messages = $this->paginateHistory(
+                fn (int $offsetId, int $batchLimit): array => $api->messages->getHistory([
+                    'peer' => $cleanUsername,
+                    'limit' => $batchLimit,
+                    'offset_id' => $offsetId,
+                    'offset_date' => 0,
+                    'add_offset' => 0,
+                    'max_id' => 0,
+                    'min_id' => 0,
+                    'hash' => 0,
+                ])['messages'] ?? [],
+                $limit,
+                $since
+            );
 
-            $messages = $history['messages'] ?? [];
             $postsData = [];
             $fetchedCount = count($messages);
 
@@ -136,6 +139,44 @@ class TelegramCollectionService
 
             return $run;
         }
+    }
+
+    /**
+     * Page through getHistory until $limit messages are collected or $since is reached.
+     *
+     * @param  callable(int $offsetId, int $limit): list<array<string, mixed>>  $fetchPage
+     * @return list<array<string, mixed>>
+     */
+    public function paginateHistory(callable $fetchPage, int $limit, ?Carbon $since = null): array
+    {
+        $allMessages = [];
+        $offsetId = 0;
+        $batchSize = (int) config('analytics.collection.pagination_batch_size', 100);
+        $targetLimit = min($limit, (int) config('analytics.collection.max_limit', 2000));
+
+        while (count($allMessages) < $targetLimit) {
+            $batch = $fetchPage($offsetId, min($batchSize, $targetLimit - count($allMessages)));
+            if (empty($batch)) {
+                break;
+            }
+
+            foreach ($batch as $message) {
+                if ($since !== null && isset($message['date'])
+                    && Carbon::createFromTimestamp($message['date'])->lt($since)) {
+                    break 2;
+                }
+
+                $allMessages[] = $message;
+            }
+
+            if (count($batch) < $batchSize) {
+                break;
+            }
+
+            $offsetId = (int) ($batch[array_key_last($batch)]['id'] ?? 0);
+        }
+
+        return $allMessages;
     }
 
     /**
@@ -289,6 +330,100 @@ class TelegramCollectionService
     }
 
     /**
+     * Batch-refresh metrics for existing posts via channels.getMessages.
+     *
+     * @param  list<string>  $externalIds
+     */
+    public function refreshPostMetrics(string $channelUsername, array $externalIds): int
+    {
+        $cleanUsername = TelegramHelper::normalizeUsername($channelUsername) ?? $channelUsername;
+        $source = $this->sourceRepository->firstOrCreate(
+            ['username' => $cleanUsername, 'source_type' => 'telegram'],
+            ['title' => $cleanUsername, 'is_active' => true]
+        );
+
+        try {
+            $messages = $this->fetchMessagesById($cleanUsername, $externalIds);
+
+            $normalized = [];
+            foreach ($messages as $message) {
+                if (! is_array($message) || ($message['_'] ?? '') !== 'message') {
+                    continue;
+                }
+
+                $post = $this->normalizeMessage($message, $source->id, $cleanUsername);
+                if ($post !== null) {
+                    $normalized[] = $post;
+                }
+            }
+
+            if (empty($normalized)) {
+                return 0;
+            }
+
+            return $this->postRepository->bulkUpsert($normalized);
+        } catch (\Throwable $e) {
+            Log::warning("Failed to refresh metrics for {$cleanUsername}: ".$e->getMessage());
+
+            return 0;
+        }
+    }
+
+    /**
+     * @param  list<string>  $externalIds
+     * @return list<array<string, mixed>>
+     */
+    protected function fetchMessagesById(string $channelUsername, array $externalIds): array
+    {
+        $api = $this->madelineProtoFactory->get();
+
+        $res = $api->channels->getMessages([
+            'channel' => $channelUsername,
+            'id' => array_map('intval', $externalIds),
+        ]);
+
+        return $res['messages'] ?? [];
+    }
+
+    /**
+     * Refresh metrics for posts published in the last N days, batched per channel.
+     */
+    public function refreshMetrics(int $days, int $batch, ?string $channel = null): int
+    {
+        $sourceId = null;
+        if ($channel !== null) {
+            $cleanUsername = TelegramHelper::normalizeUsername($channel);
+            if ($cleanUsername === null) {
+                return 0;
+            }
+
+            $source = $this->sourceRepository->findByUsername($cleanUsername);
+            if ($source === null) {
+                return 0;
+            }
+
+            $sourceId = $source->id;
+        }
+
+        $posts = $this->postRepository->getPostsForMetricsRefresh($days, $sourceId);
+        $batch = max(1, $batch);
+
+        $total = 0;
+        foreach ($posts->groupBy('source_id') as $groupId => $group) {
+            $source = $this->sourceRepository->findById($groupId);
+            if ($source === null) {
+                continue;
+            }
+
+            foreach (array_chunk($group->pluck('external_id')->all(), $batch) as $chunk) {
+                $total += $this->refreshPostMetrics($source->username, $chunk);
+            }
+        }
+
+        return $total;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function fetchPostComments(string $channelUsername, int|string $postId, int $limit = 20): array
@@ -309,6 +444,8 @@ class TelegramCollectionService
                     'channel' => $cleanUsername,
                     'post_id' => (int) $postId,
                     'total_comments' => 0,
+                    'fetched_count' => 0,
+                    'thread_dialogue' => '',
                     'comments' => [],
                     'note' => 'No linked discussion group found for this channel',
                 ];
@@ -364,6 +501,7 @@ class TelegramCollectionService
                 'channel' => $cleanUsername,
                 'post_id' => (int) $postId,
                 'total_comments' => 0,
+                'fetched_count' => 0,
                 'thread_dialogue' => '',
                 'comments' => [],
                 'error' => $e->getMessage(),

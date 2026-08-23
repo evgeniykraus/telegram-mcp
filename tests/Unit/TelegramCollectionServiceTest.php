@@ -7,6 +7,7 @@ use App\Factories\CustomMadelineProtoFactory;
 use App\Repositories\Post\Contracts\PostRepositoryInterface;
 use App\Repositories\Source\Contracts\SourceRepositoryInterface;
 use App\Services\Collection\TelegramCollectionService;
+use Carbon\Carbon;
 use Tests\TestCase;
 
 class TelegramCollectionServiceTest extends TestCase
@@ -111,5 +112,63 @@ class TelegramCollectionServiceTest extends TestCase
         $this->assertTrue($normalized['is_ad']);
         $this->assertEquals(0.17, $normalized['er']);
         $this->assertGreaterThan(0, $normalized['content_score']);
+    }
+
+    public function test_paginate_history_collects_more_than_100_posts(): void
+    {
+        $result = $this->service->paginateHistory($this->historyFetcher($this->makeMessages(150, time())), 150);
+
+        $this->assertCount(150, $result);
+    }
+
+    public function test_paginate_history_stops_at_since(): void
+    {
+        $now = time();
+        $since = Carbon::createFromTimestamp($now - (10 * 60));
+
+        $result = $this->service->paginateHistory($this->historyFetcher($this->makeMessages(100, $now, 60)), 1000, $since);
+
+        $this->assertCount(11, $result);
+    }
+
+    public function test_paginate_history_stops_at_limit(): void
+    {
+        $result = $this->service->paginateHistory($this->historyFetcher($this->makeMessages(300, time(), 60)), 50);
+
+        $this->assertCount(50, $result);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function makeMessages(int $count, int $startTs, int $step = 60): array
+    {
+        $messages = [];
+        for ($i = 0; $i < $count; $i++) {
+            $messages[] = [
+                '_' => 'message',
+                'id' => $count - $i,
+                'date' => $startTs - ($i * $step),
+                'message' => "Post {$i}",
+                'views' => 100 + $i,
+            ];
+        }
+
+        return $messages;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $messages  newest-first
+     */
+    private function historyFetcher(array $messages): callable
+    {
+        return function (int $offsetId, int $limit) use ($messages): array {
+            $batch = $messages;
+            if ($offsetId > 0) {
+                $batch = array_values(array_filter($batch, fn (array $m): bool => (int) ($m['id'] ?? 0) < $offsetId));
+            }
+
+            return array_slice($batch, 0, $limit);
+        };
     }
 }

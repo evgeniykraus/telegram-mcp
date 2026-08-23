@@ -14,6 +14,12 @@ Schedule::command('postiz:refresh')
     ->withoutOverlapping()
     ->runInBackground();
 
+// Refresh metrics (views, reactions) for posts from the last 7 days every 3 hours
+Schedule::command('postiz:refresh-metrics')
+    ->everyThreeHours()
+    ->withoutOverlapping()
+    ->runInBackground();
+
 // Daily pruning of expired idle channels and cache cleanup at 03:00
 Schedule::command('postiz:prune')
     ->dailyAt('03:00')

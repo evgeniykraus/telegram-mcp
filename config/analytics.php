@@ -8,7 +8,8 @@ return [
     ],
 
     'collection' => [
-        'max_limit' => 500,
+        'max_limit' => (int) env('ANALYTICS_COLLECTION_MAX_LIMIT', 2000),
+        'pagination_batch_size' => 100,
     ],
 
     'embeddings' => [
@@ -24,5 +25,7 @@ return [
         'ttl_days' => (int) env('ANALYTICS_SOURCE_TTL_DAYS', 14),
         'refresh_limit' => (int) env('ANALYTICS_REFRESH_LIMIT', 50),
         'refresh_since_days' => (int) env('ANALYTICS_REFRESH_SINCE_DAYS', 2),
+        'metrics_refresh_days' => (int) env('ANALYTICS_METRICS_REFRESH_DAYS', 7),
+        'metrics_batch_size' => (int) env('ANALYTICS_METRICS_BATCH_SIZE', 100),
     ],
 ];

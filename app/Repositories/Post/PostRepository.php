@@ -115,6 +115,22 @@ class PostRepository implements PostRepositoryInterface
     }
 
     /**
+     * @return Collection<int, Post>
+     */
+    public function getPostsForMetricsRefresh(int $sinceDays, ?int $sourceId = null): Collection
+    {
+        $query = Post::query()
+            ->where('published_at', '>=', now()->subDays($sinceDays));
+
+        if ($sourceId !== null) {
+            $query->where('source_id', $sourceId);
+        }
+
+        return $query->orderByDesc('published_at')
+            ->get(['id', 'source_id', 'external_id']);
+    }
+
+    /**
      * @param  list<float>  $embedding
      * @return Collection<int, Post>
      */

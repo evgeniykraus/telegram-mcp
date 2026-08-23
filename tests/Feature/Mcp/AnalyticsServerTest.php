@@ -30,6 +30,7 @@ use App\Services\Collection\TelegramCollectionService;
 use App\Services\Collection\TelegramDiscoveryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Testing\Fluent\AssertableJson;
 use Tests\TestCase;
 
 class AnalyticsServerTest extends TestCase
@@ -205,17 +206,39 @@ class AnalyticsServerTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('top_recommendations');
+        $response->assertDontSee('all_slots');
+    }
+
+    public function test_best_time_to_post_tool_respects_limit(): void
+    {
+        $source = Source::factory()->create(['username' => '@timechannel']);
+        for ($i = 0; $i < 6; $i++) {
+            Post::factory()->create([
+                'source_id' => $source->id,
+                'published_at' => now()->subHours($i),
+            ]);
+        }
+
+        $response = AnalyticsServer::tool(BestTimeToPostTool::class, [
+            'channel' => '@timechannel',
+            'days' => 30,
+            'limit' => 2,
+        ]);
+
+        $response->assertOk();
+        $response->assertStructuredContent(fn (AssertableJson $json) => $json->count('top_recommendations', 2)->etc());
     }
 
     public function test_benchmark_tool(): void
     {
-        $own = Source::factory()->own()->create(['category' => 'tech']);
-        $comp = Source::factory()->competitor()->create(['category' => 'tech']);
+        $own = Source::factory()->create(['username' => '@ownchan', 'category' => 'tech']);
+        $comp = Source::factory()->create(['username' => '@compchan', 'category' => 'tech']);
 
         Post::factory()->count(3)->create(['source_id' => $own->id, 'views' => 5000, 'er' => 0.08]);
         Post::factory()->count(3)->create(['source_id' => $comp->id, 'views' => 3000, 'er' => 0.04]);
 
         $response = AnalyticsServer::tool(BenchmarkTool::class, [
+            'channel' => '@ownchan',
             'category' => 'tech',
             'days' => 30,
         ]);
@@ -223,6 +246,33 @@ class AnalyticsServerTest extends TestCase
         $response->assertOk();
         $response->assertSee('own_avg_er');
         $response->assertSee('competitor_avg_er');
+        $response->assertDontSee('own_channels');
+        $response->assertDontSee('competitor_channels');
+    }
+
+    public function test_benchmark_tool_includes_compact_channels_when_requested(): void
+    {
+        $own = Source::factory()->create(['username' => '@ownchan', 'category' => 'tech']);
+        $comp = Source::factory()->create(['username' => '@compchan', 'category' => 'tech']);
+
+        Post::factory()->count(3)->create(['source_id' => $own->id]);
+        Post::factory()->count(3)->create(['source_id' => $comp->id]);
+
+        $response = AnalyticsServer::tool(BenchmarkTool::class, [
+            'channel' => '@ownchan',
+            'category' => 'tech',
+            'days' => 30,
+            'include_channels' => true,
+        ]);
+
+        $response->assertOk();
+        $response->assertStructuredContent(fn (AssertableJson $json) => $json
+            ->where('own_channels.0.username', '@ownchan')
+            ->has('competitor_channels', 1)
+            ->where('competitor_channels.0.username', '@compchan')
+            ->etc());
+        $response->assertSee('subscribers_count');
+        $response->assertDontSee('"title"');
     }
 
     public function test_report_tool(): void
@@ -318,6 +368,49 @@ class AnalyticsServerTest extends TestCase
         $response->assertOk();
         $response->assertSee('outliers');
         $response->assertSee('Сенсационный хук');
+        $response->assertSee('peak_multiplier');
+        $response->assertSee('er_multiplier');
+    }
+
+    public function test_find_outliers_tool_dimension_views_excludes_high_engagement_low_views(): void
+    {
+        $source = Source::factory()->create(['username' => '@outlierdim']);
+        Post::factory()->count(4)->create([
+            'source_id' => $source->id,
+            'views' => 1000,
+            'reactions' => 0,
+            'comments' => 0,
+            'forwards' => 0,
+            'er' => 0.0,
+            'published_at' => now()->subDays(2),
+        ]);
+        // Views far BELOW median, but a burst of comments: must NOT pass dimension=views
+        Post::factory()->create([
+            'source_id' => $source->id,
+            'views' => 100,
+            'reactions' => 0,
+            'comments' => 50,
+            'forwards' => 0,
+            'er' => 0.5,
+            'published_at' => now()->subDays(1),
+            'text' => 'Обсуждение без просмотров',
+        ]);
+
+        $responseViews = AnalyticsServer::tool(FindOutliersTool::class, [
+            'channel' => '@outlierdim',
+            'min_multiplier' => 2.0,
+            'dimension' => 'views',
+        ]);
+        $responseViews->assertOk();
+        $responseViews->assertDontSee('Обсуждение без просмотров');
+
+        $responseAny = AnalyticsServer::tool(FindOutliersTool::class, [
+            'channel' => '@outlierdim',
+            'min_multiplier' => 2.0,
+            'dimension' => 'any',
+        ]);
+        $responseAny->assertOk();
+        $responseAny->assertSee('Обсуждение без просмотров');
     }
 
     public function test_topic_saturation_tool(): void
@@ -368,6 +461,26 @@ class AnalyticsServerTest extends TestCase
         $response->assertSee('emoji_density_per_100_words');
     }
 
+    public function test_channel_style_dna_tool_structural_fallback_non_empty_hooks(): void
+    {
+        $source = Source::factory()->create(['username' => '@stylednafallback']);
+        Post::factory()->create([
+            'source_id' => $source->id,
+            'text' => 'Выгорание авторов неизбежно?',
+            'views' => 1200,
+        ]);
+
+        $response = AnalyticsServer::tool(ChannelStyleDnaTool::class, [
+            'channel' => '@stylednafallback',
+        ]);
+
+        $response->assertOk();
+        $response->assertStructuredContent(fn (AssertableJson $json) => $json
+            ->has('detected_hook_types', 1)
+            ->where('detected_hook_types.0', 'Вопрос в заголовке (вовлечение)')
+            ->etc());
+    }
+
     public function test_get_post_comments_tool(): void
     {
         $mockService = $this->createMock(TelegramCollectionService::class);
@@ -391,6 +504,42 @@ class AnalyticsServerTest extends TestCase
         $response->assertOk();
         $response->assertSee('total_comments');
         $response->assertSee('Отличный пост!');
+    }
+
+    public function test_get_post_comments_tool_numeric_id_not_found_returns_actionable_error(): void
+    {
+        $response = AnalyticsServer::tool(GetPostCommentsTool::class, [
+            'post_id_or_url' => '999999',
+            'format' => 'raw_json',
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('Post #999999 not found locally');
+        $response->assertSee('https://t.me/channel/999999');
+    }
+
+    public function test_get_post_comments_tool_compact_text_no_discussion(): void
+    {
+        $mockService = $this->createMock(TelegramCollectionService::class);
+        $mockService->method('fetchPostComments')->willReturn([
+            'channel' => '@commentchan',
+            'post_id' => 100,
+            'total_comments' => 0,
+            'fetched_count' => 0,
+            'thread_dialogue' => '',
+            'comments' => [],
+            'note' => 'No linked discussion group found for this channel',
+        ]);
+        $this->app->instance(TelegramCollectionService::class, $mockService);
+
+        $response = AnalyticsServer::tool(GetPostCommentsTool::class, [
+            'post_id_or_url' => 'https://t.me/commentchan/100',
+            'format' => 'compact_text',
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('No linked discussion group found');
+        $response->assertSee('Showing: 0');
     }
 
     public function test_discover_channels_tool(): void

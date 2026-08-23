@@ -150,34 +150,36 @@ class AnalyticsRepository implements AnalyticsRepositoryInterface
     /**
      * @return array<string, mixed>
      */
-    public function getCategoryBenchmark(string $category, int $sinceDays = 30): array
+    public function getCategoryBenchmark(string $category, int $sinceDays = 30, ?string $ownUsername = null): array
     {
         $since = now()->subDays($sinceDays);
 
-        $query = Source::query()->where('is_active', true);
-        if ($category !== 'all') {
-            $query->where('category', $category);
-        }
-        $sources = $query->get();
+        $ownSource = $ownUsername !== null
+            ? Source::query()->where('username', $ownUsername)->first()
+            : null;
 
-        $ownSources = $sources->where('is_own', true);
-        $competitorSources = $sources->where('is_own', false);
-
-        $ownStats = DB::table('posts')
-            ->join('sources', 'posts.source_id', '=', 'sources.id')
-            ->where('sources.is_own', true)
-            ->where('posts.published_at', '>=', $since)
-            ->when($category !== 'all', fn ($q) => $q->where('sources.category', $category))
-            ->selectRaw('COALESCE(AVG(posts.er), 0) as avg_er, COALESCE(AVG(posts.views), 0) as avg_views')
-            ->first();
+        $ownStats = $ownSource !== null
+            ? DB::table('posts')
+                ->where('source_id', $ownSource->id)
+                ->where('published_at', '>=', $since)
+                ->selectRaw('COALESCE(AVG(er), 0) as avg_er, COALESCE(AVG(views), 0) as avg_views')
+                ->first()
+            : null;
 
         $competitorStats = DB::table('posts')
             ->join('sources', 'posts.source_id', '=', 'sources.id')
-            ->where('sources.is_own', false)
+            ->where('sources.is_active', true)
             ->where('posts.published_at', '>=', $since)
             ->when($category !== 'all', fn ($q) => $q->where('sources.category', $category))
+            ->when($ownSource !== null, fn ($q) => $q->where('sources.id', '!=', $ownSource->id))
             ->selectRaw('COALESCE(AVG(posts.er), 0) as avg_er, COALESCE(AVG(posts.views), 0) as avg_views')
             ->first();
+
+        $competitorSources = Source::query()
+            ->where('is_active', true)
+            ->when($category !== 'all', fn ($q) => $q->where('category', $category))
+            ->when($ownSource !== null, fn ($q) => $q->where('id', '!=', $ownSource->id))
+            ->get();
 
         return [
             'category' => $category,
@@ -186,8 +188,14 @@ class AnalyticsRepository implements AnalyticsRepositoryInterface
             'own_avg_views' => (float) ($ownStats->avg_views ?? 0.0),
             'competitor_avg_er' => (float) ($competitorStats->avg_er ?? 0.0),
             'competitor_avg_views' => (float) ($competitorStats->avg_views ?? 0.0),
-            'own_channels' => $ownSources->values()->toArray(),
-            'competitor_channels' => $competitorSources->values()->toArray(),
+            'own_channels' => $ownSource !== null ? [[
+                'username' => $ownSource->username,
+                'subscribers_count' => $ownSource->subscribers_count,
+            ]] : [],
+            'competitor_channels' => $competitorSources->map(fn (Source $s): array => [
+                'username' => $s->username,
+                'subscribers_count' => $s->subscribers_count,
+            ])->values()->all(),
         ];
     }
 
@@ -230,7 +238,7 @@ class AnalyticsRepository implements AnalyticsRepositoryInterface
     /**
      * @return Collection<int, Post>
      */
-    public function getOutlierPosts(float $minMultiplier = 2.0, int $sinceDays = 14, ?int $sourceId = null, int $limit = 20): Collection
+    public function getOutlierPosts(float $minMultiplier = 2.0, int $sinceDays = 14, ?int $sourceId = null, int $limit = 20, string $dimension = 'views'): Collection
     {
         $since = now()->subDays($sinceDays);
 
@@ -243,12 +251,13 @@ class AnalyticsRepository implements AnalyticsRepositoryInterface
         $outliers = collect();
 
         foreach ($sources as $source) {
-            $medianViews = $this->getChannelMedianMetric($source->id, 'views', max($sinceDays, 30));
-            $medianReactions = $this->getChannelMedianMetric($source->id, 'reactions', max($sinceDays, 30));
-            $medianComments = $this->getChannelMedianMetric($source->id, 'comments', max($sinceDays, 30));
-            $medianEr = $this->getChannelMedianMetric($source->id, 'er', max($sinceDays, 30));
+            $medianViews = $this->getChannelMedianMetric($source->id, 'views', $sinceDays);
+            $medianReactions = $this->getChannelMedianMetric($source->id, 'reactions', $sinceDays);
+            $medianComments = $this->getChannelMedianMetric($source->id, 'comments', $sinceDays);
+            $medianForwards = $this->getChannelMedianMetric($source->id, 'forwards', $sinceDays);
+            $medianEr = $this->getChannelMedianMetric($source->id, 'er', $sinceDays);
 
-            $medianEngagement = $medianReactions + ($medianComments * 2);
+            $medianEngagement = $medianReactions + ($medianComments * 2) + ($medianForwards * 1.5);
 
             $posts = Post::query()
                 ->where('source_id', $source->id)
@@ -264,9 +273,14 @@ class AnalyticsRepository implements AnalyticsRepositoryInterface
                     : ($postEngagement > 0 ? round($postEngagement, 2) : 1.0);
                 $erMultiplier = $medianEr > 0 ? round($post->er / $medianEr, 2) : 1.0;
 
-                $maxMultiplier = max($viewsMultiplier, $engagementMultiplier, $erMultiplier);
+                $dimensionMultiplier = match ($dimension) {
+                    'views' => $viewsMultiplier,
+                    'engagement' => $engagementMultiplier,
+                    'er' => $erMultiplier,
+                    default => max($viewsMultiplier, $engagementMultiplier, $erMultiplier),
+                };
 
-                if ($maxMultiplier >= $minMultiplier) {
+                if ($dimensionMultiplier >= $minMultiplier) {
                     if ($viewsMultiplier >= 1.5 && $engagementMultiplier >= 1.5) {
                         $outlierType = 'breakout';
                     } elseif ($post->comments >= 3 && $medianComments > 0 && ($post->comments / $medianComments) >= 2.0) {
@@ -278,9 +292,11 @@ class AnalyticsRepository implements AnalyticsRepositoryInterface
                     }
 
                     $post->setAttribute('channel_median_views', $medianViews);
-                    $post->setAttribute('multiplier', $maxMultiplier);
+                    $post->setAttribute('multiplier', $dimensionMultiplier);
+                    $post->setAttribute('peak_multiplier', max($viewsMultiplier, $engagementMultiplier, $erMultiplier));
                     $post->setAttribute('views_multiplier', $viewsMultiplier);
                     $post->setAttribute('engagement_multiplier', $engagementMultiplier);
+                    $post->setAttribute('er_multiplier', $erMultiplier);
                     $post->setAttribute('outlier_type', $outlierType);
 
                     $outliers->push($post);

@@ -33,6 +33,11 @@ interface PostRepositoryInterface
     public function getRecentBySource(int $sourceId, int $limit = 100): Collection;
 
     /**
+     * @return Collection<int, Post>
+     */
+    public function getPostsForMetricsRefresh(int $sinceDays, ?int $sourceId = null): Collection;
+
+    /**
      * @param  list<float>  $embedding
      * @return Collection<int, Post>
      */

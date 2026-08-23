@@ -27,10 +27,18 @@ class GetPostCommentsTool extends Tool
         $result = $analyticsService->getPostComments($idOrUrl, $limit);
 
         if ($format === 'compact_text') {
-            $header = "### Comments for {$result['channel']} (Post #{$result['post_id']})\n";
-            $header .= "Total comments in channel: {$result['total_comments']} | Showing: {$result['fetched_count']}\n\n";
+            if (! empty($result['error'])) {
+                return Response::text("Error: {$result['error']}");
+            }
 
-            return Response::text($header.$result['thread_dialogue']);
+            $header = '### Comments for '.($result['channel'] ?? '').' (Post #'.($result['post_id'] ?? '').")\n";
+            $header .= 'Total comments in channel: '.($result['total_comments'] ?? 0).' | Showing: '.($result['fetched_count'] ?? 0)."\n";
+            if (! empty($result['note'])) {
+                $header .= 'Note: '.$result['note']."\n";
+            }
+            $header .= "\n";
+
+            return Response::text($header.($result['thread_dialogue'] ?? ''));
         }
 
         return Response::structured($result);
