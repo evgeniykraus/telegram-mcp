@@ -11,7 +11,7 @@ use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Tool;
 
-#[Description('Search recent news and posts globally across Telegram and the local database by keyword or topic.')]
+#[Description('Search recent news and posts globally across Telegram channels by keyword or topic.')]
 class SearchGlobalNewsTool extends Tool
 {
     public function handle(Request $request, TelegramDiscoveryService $discoveryService): Response|ResponseFactory
@@ -22,7 +22,7 @@ class SearchGlobalNewsTool extends Tool
         }
 
         $limit = max(1, min((int) ($request->get('limit') ?? 15), 50));
-        $sinceHours = $request->get('since_hours') !== null ? (int) $request->get('since_hours') : 24;
+        $sinceHours = $request->get('since_hours') !== null ? (int) $request->get('since_hours') : null;
         $minViews = max(0, (int) ($request->get('min_views') ?? 0));
         $fullText = (bool) ($request->get('full_text') ?? false);
         $previewLength = max(50, (int) ($request->get('preview_length') ?? 200));
@@ -61,7 +61,7 @@ class SearchGlobalNewsTool extends Tool
             'limit' => $schema->integer()
                 ->description('Maximum number of posts to return (default: 15, max: 50)'),
             'since_hours' => $schema->integer()
-                ->description('Optional: search posts published in the last N hours (default: 24)'),
+                ->description('Optional: search posts published in the last N hours'),
             'min_views' => $schema->integer()
                 ->description('Optional: filter posts by minimum view count (default: 0)'),
             'full_text' => $schema->boolean()

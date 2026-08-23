@@ -11,7 +11,7 @@ use Laravel\Mcp\ResponseFactory;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Tool;
 
-#[Description('Discover popular thematic Telegram channels by keyword, topic, or niche with subscriber counts and metadata.')]
+#[Description('Discover popular thematic Telegram channels by keyword, topic, or niche with subscriber counts, recent views, and ER.')]
 class DiscoverChannelsTool extends Tool
 {
     public function handle(Request $request, TelegramDiscoveryService $discoveryService): Response|ResponseFactory

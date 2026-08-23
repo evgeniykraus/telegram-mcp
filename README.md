@@ -197,8 +197,8 @@ vendor/bin/sail artisan postiz:embed --limit=100
 
 | Инструмент | Параметры | Описание |
 |---|---|---|
-| `discover_channels` | `query` (string, req), `limit` (int), `min_subscribers` (int) | Поиск популярных тематических каналов по нише/теме через Telegram MTProto и локальную базу |
-| `search_global_news` | `query` (string, req), `limit` (int), `since_hours` (int), `min_views` (int), `full_text` (bool) | Глобальный поиск свежих новостей и публикаций по ключевым словам по всем каналам Telegram |
+| `discover_channels` | `query` (string, req), `limit` (int), `min_subscribers` (int) | Поиск популярных тематических каналов по нише/теме в реальном времени через Telegram MTProto API |
+| `search_global_news` | `query` (string, req), `limit` (int), `since_hours` (int), `min_views` (int), `full_text` (bool) | Глобальный поиск свежих новостей и публикаций по ключевым словам по всем каналам Telegram в MTProto API |
 | `collect_channels` | `channels` (string, req), `limit` (int), `since_days` (int) | Поставить задачу на сбор постов указанных каналов в очередь |
 | `channel_report` | `channel` (string, req), `days` (int) | Получить полный аналитический срез по каналу (подписчики, средний ER, лучший пост, форварды, реакции) |
 | `top_posts` | `limit` (int), `channel` (string), `since_days` (int), `format` (string), `sort_by` (enum) | Топ лучших постов ниши, отсортированных по `content_score`, `er`, `views` или `forwards` |

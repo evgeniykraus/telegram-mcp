@@ -5,7 +5,6 @@ namespace App\Services\Collection;
 use App\DTOs\Analytics\DiscoveredChannelDto;
 use App\DTOs\Analytics\GlobalPostDto;
 use App\Factories\CustomMadelineProtoFactory;
-use App\Repositories\Post\Contracts\PostRepositoryInterface;
 use App\Repositories\Source\Contracts\SourceRepositoryInterface;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -15,11 +14,10 @@ class TelegramDiscoveryService
     public function __construct(
         private readonly CustomMadelineProtoFactory $madelineProtoFactory,
         private readonly SourceRepositoryInterface $sourceRepository,
-        private readonly PostRepositoryInterface $postRepository,
     ) {}
 
     /**
-     * Discover popular thematic Telegram channels by query.
+     * Discover popular thematic Telegram channels exclusively via Telegram MTProto API.
      *
      * @return list<DiscoveredChannelDto>
      */
@@ -31,37 +29,11 @@ class TelegramDiscoveryService
         $channelsMap = [];
         $queryVariants = $this->expandSearchQueries($query);
 
-        // 1. Search existing channels in our local database for all query variants
-        foreach ($queryVariants as $variant) {
-            $localSources = $this->sourceRepository->searchByQuery($variant, $limit * 2);
-            foreach ($localSources as $source) {
-                $username = $source->username;
-                $cleanUsername = ltrim($username, '@');
-                $key = strtolower($username);
-
-                if (! isset($channelsMap[$key])) {
-                    $channelsMap[$key] = [
-                        'username' => $username,
-                        'title' => $source->title ?? $cleanUsername,
-                        'description' => $source->description,
-                        'subscribers_count' => (int) $source->subscribers_count,
-                        'is_verified' => false,
-                        'is_scam' => false,
-                        'is_fake' => false,
-                        'url' => "https://t.me/{$cleanUsername}",
-                        'is_already_tracked' => true,
-                        'last_collected_at' => $source->last_collected_at?->toDateTimeString(),
-                        'posts_count' => (int) ($source->posts_count ?? 0),
-                    ];
-                }
-            }
-        }
-
-        // 2. Search Telegram globally via MadelineProto
+        // 1. Search Telegram globally via MadelineProto API
         try {
             $api = $this->madelineProtoFactory->get();
 
-            // 2a. Contacts search across top query variants
+            // 1a. Contacts search across top query variants
             foreach (array_slice($queryVariants, 0, 3) as $searchQuery) {
                 try {
                     $searchResults = $api->contacts->search([
@@ -76,7 +48,7 @@ class TelegramDiscoveryService
                 }
             }
 
-            // 2b. Extract active channels from global message search
+            // 1b. Extract active channels from global message search
             try {
                 $globalSearch = $api->messages->searchGlobal([
                     'q' => $query,
@@ -95,10 +67,10 @@ class TelegramDiscoveryService
                 Log::debug("Telegram discovery searchGlobal chat extraction for '{$query}' error: ".$e->getMessage());
             }
         } catch (\Throwable $e) {
-            Log::debug('Telegram discovery API error: '.$e->getMessage());
+            Log::warning('Telegram discovery API error: '.$e->getMessage());
         }
 
-        // 3. Filter channels
+        // 2. Filter channels
         // If minSubscribers is 0, we apply a sensible soft floor of 500 subscribers if better channels exist
         $hasSignificantChannels = false;
         foreach ($channelsMap as $item) {
@@ -123,7 +95,7 @@ class TelegramDiscoveryService
             );
         }
 
-        // 4. Calculate Relevance Score & Sort
+        // 3. Calculate Relevance Score & Sort
         $scored = [];
         $queryWords = $this->extractMeaningfulTokens($query);
 
@@ -158,14 +130,14 @@ class TelegramDiscoveryService
 
         $topChannels = array_slice(array_column($scored, 'data'), 0, $limit);
 
-        // 5. Enrich top channels with recent engagement metrics (recent views, ER, last post date)
+        // 4. Enrich top channels with recent engagement metrics directly from Telegram
         $this->enrichChannelsWithRecentMetrics($topChannels, $api ?? null);
 
         return array_map(fn (array $item) => DiscoveredChannelDto::fromArray($item), $topChannels);
     }
 
     /**
-     * Search recent posts and news globally by query with multi-term fallback.
+     * Search recent posts and news globally exclusively via Telegram MTProto API.
      *
      * @return list<GlobalPostDto>
      */
@@ -176,35 +148,9 @@ class TelegramDiscoveryService
         int $minViews = 0
     ): array {
         $postsMap = [];
-        $sinceDays = $sinceHours !== null ? (int) max(1, ceil($sinceHours / 24)) : null;
         $queryVariants = $this->expandSearchQueries($query);
 
-        // 1. Search local posts database
-        foreach ($queryVariants as $variant) {
-            $localPosts = $this->postRepository->searchByText($variant, $limit * 2, $sinceDays, $minViews);
-            foreach ($localPosts as $post) {
-                $username = $post->source?->username ?? '@channel';
-                $key = $post->url ?? "{$username}_{$post->external_id}";
-
-                if (! isset($postsMap[$key])) {
-                    $postsMap[$key] = [
-                        'id' => $post->id,
-                        'channel_username' => $username,
-                        'channel_title' => $post->source?->title,
-                        'url' => $post->url,
-                        'published_at' => $post->published_at?->toDateTimeString(),
-                        'text' => $post->text,
-                        'views' => (int) $post->views,
-                        'forwards' => (int) $post->forwards,
-                        'reactions' => (int) $post->reactions,
-                        'er' => (float) $post->er,
-                        'content_score' => (float) $post->content_score,
-                    ];
-                }
-            }
-        }
-
-        // 2. Search Telegram MTProto globally across query variants
+        // Search Telegram MTProto globally across query variants
         try {
             $api = $this->madelineProtoFactory->get();
             $minTimestamp = $sinceHours !== null ? Carbon::now()->subHours($sinceHours)->timestamp : 0;
@@ -226,7 +172,12 @@ class TelegramDiscoveryService
                     $chats = [];
                     foreach ($response['chats'] ?? [] as $chat) {
                         if (isset($chat['id'])) {
-                            $chats[$chat['id']] = $chat;
+                            $rawIdStr = (string) $chat['id'];
+                            $chats[$rawIdStr] = $chat;
+                            $cleanId = ltrim(str_replace('-100', '', $rawIdStr), '-');
+                            $chats[$cleanId] = $chat;
+                            $chats['-100'.$cleanId] = $chat;
+                            $chats['-'.$cleanId] = $chat;
                         }
                     }
 
@@ -240,8 +191,19 @@ class TelegramDiscoveryService
                             continue;
                         }
 
-                        $peerId = $message['peer_id']['channel_id'] ?? ($message['peer_id']['chat_id'] ?? ($message['from_id']['channel_id'] ?? null));
-                        $chatInfo = $peerId !== null ? ($chats[$peerId] ?? null) : null;
+                        $peer = $message['peer_id'] ?? ($message['from_id'] ?? null);
+                        $peerIdStr = null;
+                        if (is_array($peer)) {
+                            $peerIdStr = (string) ($peer['channel_id'] ?? ($peer['chat_id'] ?? ($peer['user_id'] ?? '')));
+                        } elseif (is_scalar($peer)) {
+                            $peerIdStr = (string) $peer;
+                        }
+
+                        $chatInfo = null;
+                        if ($peerIdStr !== null && $peerIdStr !== '') {
+                            $cleanPeer = ltrim(str_replace('-100', '', $peerIdStr), '-');
+                            $chatInfo = $chats[$peerIdStr] ?? ($chats[$cleanPeer] ?? ($chats['-100'.$cleanPeer] ?? ($chats['-'.$cleanPeer] ?? null)));
+                        }
 
                         $rawUsername = (string) ($chatInfo['username'] ?? '');
                         $channelTitle = (string) ($chatInfo['title'] ?? '');
@@ -298,10 +260,10 @@ class TelegramDiscoveryService
                 }
             }
         } catch (\Throwable $e) {
-            Log::debug('Telegram searchGlobal error: '.$e->getMessage());
+            Log::warning('Telegram searchGlobal error: '.$e->getMessage());
         }
 
-        // 3. Relevance ranking
+        // Relevance ranking
         $queryTokens = $this->extractMeaningfulTokens($query);
         $scoredPosts = [];
 
@@ -398,6 +360,85 @@ class TelegramDiscoveryService
     }
 
     /**
+     * Enrich top channels with recent engagement metrics directly from Telegram MTProto API.
+     *
+     * @param  list<array<string, mixed>>  $channels
+     */
+    private function enrichChannelsWithRecentMetrics(array &$channels, mixed $api = null): void
+    {
+        if ($api === null) {
+            return;
+        }
+
+        foreach ($channels as &$chan) {
+            $username = (string) ($chan['username'] ?? '');
+            $cleanUsername = ltrim($username, '@');
+
+            if ($cleanUsername === '') {
+                continue;
+            }
+
+            try {
+                $history = $api->messages->getHistory([
+                    'peer' => $cleanUsername,
+                    'limit' => 5,
+                    'offset_id' => 0,
+                    'offset_date' => 0,
+                    'add_offset' => 0,
+                    'max_id' => 0,
+                    'min_id' => 0,
+                    'hash' => 0,
+                ]);
+
+                $messages = $history['messages'] ?? [];
+                $viewsList = [];
+                $erList = [];
+                $lastDate = null;
+
+                foreach ($messages as $m) {
+                    if (! is_array($m) || ($m['_'] ?? '') !== 'message') {
+                        continue;
+                    }
+
+                    if ($lastDate === null && isset($m['date'])) {
+                        $lastDate = Carbon::createFromTimestamp($m['date'])->toDateTimeString();
+                    }
+
+                    $views = (int) ($m['views'] ?? 0);
+                    if ($views > 0) {
+                        $viewsList[] = $views;
+
+                        $forwards = (int) ($m['forwards'] ?? 0);
+                        $comments = (int) ($m['replies']['replies'] ?? 0);
+                        $reactionsCount = 0;
+                        if (isset($m['reactions']['results']) && is_array($m['reactions']['results'])) {
+                            foreach ($m['reactions']['results'] as $r) {
+                                $reactionsCount += (int) ($r['count'] ?? 0);
+                            }
+                        }
+
+                        $er = round(($reactionsCount + $forwards + $comments) / $views, 4);
+                        $erList[] = $er;
+                    }
+                }
+
+                if (! empty($viewsList)) {
+                    $chan['recent_avg_views'] = (int) round(array_sum($viewsList) / count($viewsList));
+                }
+                if (! empty($erList)) {
+                    $chan['recent_er'] = round(array_sum($erList) / count($erList), 4);
+                }
+                if ($lastDate !== null) {
+                    $chan['last_post_at'] = $lastDate;
+                }
+            } catch (\Throwable $ex) {
+                Log::debug("Could not peek recent history for {$cleanUsername}: ".$ex->getMessage());
+            }
+        }
+        unset($chan);
+    }
+
+    /**
      * Expand query into useful synonyms and component tokens.
      *
      * @return list<string>
@@ -451,100 +492,5 @@ class TelegramDiscoveryService
         );
 
         return array_values($filtered);
-    }
-
-    /**
-     * Enrich top channels with recent engagement metrics (recent views, ER, last post date).
-     *
-     * @param  list<array<string, mixed>>  $channels
-     */
-    private function enrichChannelsWithRecentMetrics(array &$channels, mixed $api = null): void
-    {
-        foreach ($channels as &$chan) {
-            $username = (string) ($chan['username'] ?? '');
-            $cleanUsername = ltrim($username, '@');
-
-            // 1. If channel has posts in local database, use rich database metrics
-            $isAlreadyTracked = (bool) ($chan['is_already_tracked'] ?? false);
-            $postsCount = (int) ($chan['posts_count'] ?? 0);
-
-            if ($isAlreadyTracked && $postsCount > 0) {
-                $dbSource = $this->sourceRepository->findByUsername($username);
-                if ($dbSource !== null) {
-                    $recentPosts = $this->postRepository->getRecentBySource($dbSource->id, 10);
-                    if ($recentPosts->isNotEmpty()) {
-                        $viewsList = $recentPosts->pluck('views')->filter(fn ($v) => $v > 0)->all();
-                        $erList = $recentPosts->pluck('er')->all();
-
-                        $chan['recent_avg_views'] = ! empty($viewsList) ? (int) round(array_sum($viewsList) / count($viewsList)) : null;
-                        $chan['recent_er'] = ! empty($erList) ? round(array_sum($erList) / count($erList), 4) : null;
-                        $chan['last_post_at'] = $recentPosts->first()->published_at?->toDateTimeString();
-
-                        continue;
-                    }
-                }
-            }
-
-            // 2. Otherwise, peek at the last 3-5 posts via MadelineProto API
-            if ($api !== null && $cleanUsername !== '') {
-                try {
-                    $history = $api->messages->getHistory([
-                        'peer' => $cleanUsername,
-                        'limit' => 5,
-                        'offset_id' => 0,
-                        'offset_date' => 0,
-                        'add_offset' => 0,
-                        'max_id' => 0,
-                        'min_id' => 0,
-                        'hash' => 0,
-                    ]);
-
-                    $messages = $history['messages'] ?? [];
-                    $viewsList = [];
-                    $erList = [];
-                    $lastDate = null;
-
-                    foreach ($messages as $m) {
-                        if (! is_array($m) || ($m['_'] ?? '') !== 'message') {
-                            continue;
-                        }
-
-                        if ($lastDate === null && isset($m['date'])) {
-                            $lastDate = Carbon::createFromTimestamp($m['date'])->toDateTimeString();
-                        }
-
-                        $views = (int) ($m['views'] ?? 0);
-                        if ($views > 0) {
-                            $viewsList[] = $views;
-
-                            $forwards = (int) ($m['forwards'] ?? 0);
-                            $comments = (int) ($m['replies']['replies'] ?? 0);
-                            $reactionsCount = 0;
-                            if (isset($m['reactions']['results']) && is_array($m['reactions']['results'])) {
-                                foreach ($m['reactions']['results'] as $r) {
-                                    $reactionsCount += (int) ($r['count'] ?? 0);
-                                }
-                            }
-
-                            $er = round(($reactionsCount + $forwards + $comments) / $views, 4);
-                            $erList[] = $er;
-                        }
-                    }
-
-                    if (! empty($viewsList)) {
-                        $chan['recent_avg_views'] = (int) round(array_sum($viewsList) / count($viewsList));
-                    }
-                    if (! empty($erList)) {
-                        $chan['recent_er'] = round(array_sum($erList) / count($erList), 4);
-                    }
-                    if ($lastDate !== null) {
-                        $chan['last_post_at'] = $lastDate;
-                    }
-                } catch (\Throwable $ex) {
-                    Log::debug("Could not peek recent history for {$cleanUsername}: ".$ex->getMessage());
-                }
-            }
-        }
-        unset($chan);
     }
 }
