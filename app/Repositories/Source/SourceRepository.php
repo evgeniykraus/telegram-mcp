@@ -94,6 +94,43 @@ class SourceRepository implements SourceRepositoryInterface
             ->get();
     }
 
+    /**
+     * @return Collection<int, Source>
+     */
+    public function searchByQuery(string $query, int $limit = 20): Collection
+    {
+        $trimmed = trim($query);
+        $fullTerm = '%'.mb_strtolower($trimmed).'%';
+        $words = array_filter(
+            preg_split('/[\s,\.\-_]+/u', mb_strtolower($trimmed)) ?: [],
+            fn (string $w) => mb_strlen($w) >= 3
+        );
+
+        return Source::query()
+            ->withCount('posts')
+            ->where(function ($q) use ($fullTerm, $words) {
+                $q->where(function ($sub) use ($fullTerm) {
+                    $sub->whereRaw('LOWER(username) LIKE ?', [$fullTerm])
+                        ->orWhereRaw('LOWER(title) LIKE ?', [$fullTerm])
+                        ->orWhereRaw('LOWER(description) LIKE ?', [$fullTerm])
+                        ->orWhereRaw('LOWER(category) LIKE ?', [$fullTerm]);
+                });
+
+                foreach ($words as $w) {
+                    $tokenTerm = "%{$w}%";
+                    $q->orWhere(function ($sub) use ($tokenTerm) {
+                        $sub->whereRaw('LOWER(username) LIKE ?', [$tokenTerm])
+                            ->orWhereRaw('LOWER(title) LIKE ?', [$tokenTerm])
+                            ->orWhereRaw('LOWER(description) LIKE ?', [$tokenTerm])
+                            ->orWhereRaw('LOWER(category) LIKE ?', [$tokenTerm]);
+                    });
+                }
+            })
+            ->orderByDesc('subscribers_count')
+            ->limit($limit)
+            ->get();
+    }
+
     public function deleteSourceWithData(Source $source): void
     {
         $source->posts()->delete();

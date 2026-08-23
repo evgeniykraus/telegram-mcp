@@ -39,5 +39,10 @@ interface SourceRepositoryInterface
      */
     public function getExpired(int $ttlDays = 14): Collection;
 
+    /**
+     * @return Collection<int, Source>
+     */
+    public function searchByQuery(string $query, int $limit = 20): Collection;
+
     public function deleteSourceWithData(Source $source): void;
 }

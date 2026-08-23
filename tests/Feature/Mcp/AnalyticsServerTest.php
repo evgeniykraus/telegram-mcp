@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Mcp;
 
+use App\DTOs\Analytics\DiscoveredChannelDto;
+use App\DTOs\Analytics\GlobalPostDto;
 use App\Enums\CollectionRunStatus;
 use App\Mcp\Resources\BestPublishingTimesResource;
 use App\Mcp\Resources\ChannelsResource;
@@ -11,11 +13,13 @@ use App\Mcp\Tools\BestTimeToPostTool;
 use App\Mcp\Tools\ChannelReportTool;
 use App\Mcp\Tools\ChannelStyleDnaTool;
 use App\Mcp\Tools\CollectChannelsTool;
+use App\Mcp\Tools\DiscoverChannelsTool;
 use App\Mcp\Tools\FindOutliersTool;
 use App\Mcp\Tools\FormatBreakdownTool;
 use App\Mcp\Tools\GetPostCommentsTool;
 use App\Mcp\Tools\GetPostTool;
 use App\Mcp\Tools\ReportTool;
+use App\Mcp\Tools\SearchGlobalNewsTool;
 use App\Mcp\Tools\SearchSimilarPostsTool;
 use App\Mcp\Tools\TopicSaturationTool;
 use App\Mcp\Tools\TopPostsTool;
@@ -23,6 +27,7 @@ use App\Models\CollectionRun;
 use App\Models\Post;
 use App\Models\Source;
 use App\Services\Collection\TelegramCollectionService;
+use App\Services\Collection\TelegramDiscoveryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -386,5 +391,63 @@ class AnalyticsServerTest extends TestCase
         $response->assertOk();
         $response->assertSee('total_comments');
         $response->assertSee('Отличный пост!');
+    }
+
+    public function test_discover_channels_tool(): void
+    {
+        $mockDiscoveryService = $this->createMock(TelegramDiscoveryService::class);
+        $mockDiscoveryService->method('discoverChannels')->willReturn([
+            DiscoveredChannelDto::fromArray([
+                'username' => '@ai_news_daily',
+                'title' => 'AI News Daily',
+                'description' => 'Главные новости искусственного интеллекта',
+                'subscribers_count' => 45000,
+                'is_verified' => true,
+                'url' => 'https://t.me/ai_news_daily',
+            ]),
+        ]);
+        $this->app->instance(TelegramDiscoveryService::class, $mockDiscoveryService);
+
+        $response = AnalyticsServer::tool(DiscoverChannelsTool::class, [
+            'query' => 'искусственный интеллект',
+            'limit' => 5,
+            'min_subscribers' => 10000,
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('@ai_news_daily');
+        $response->assertSee('AI News Daily');
+        $response->assertSee('45000');
+    }
+
+    public function test_search_global_news_tool(): void
+    {
+        $mockDiscoveryService = $this->createMock(TelegramDiscoveryService::class);
+        $mockDiscoveryService->method('searchGlobalNews')->willReturn([
+            GlobalPostDto::fromArray([
+                'id' => '777',
+                'channel_username' => '@tech_breaking',
+                'channel_title' => 'Tech Breaking News',
+                'url' => 'https://t.me/tech_breaking/777',
+                'published_at' => now()->toDateTimeString(),
+                'text' => 'Анонсирован прорыв в архитектуре языковых моделей',
+                'views' => 15000,
+                'forwards' => 250,
+                'reactions' => 400,
+                'er' => 0.0433,
+                'content_score' => 75.2,
+            ]),
+        ]);
+        $this->app->instance(TelegramDiscoveryService::class, $mockDiscoveryService);
+
+        $response = AnalyticsServer::tool(SearchGlobalNewsTool::class, [
+            'query' => 'языковые модели',
+            'limit' => 5,
+            'since_hours' => 24,
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('@tech_breaking');
+        $response->assertSee('языковых моделей');
     }
 }

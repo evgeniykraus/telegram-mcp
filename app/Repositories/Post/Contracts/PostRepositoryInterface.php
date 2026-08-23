@@ -49,6 +49,17 @@ interface PostRepositoryInterface
     public function getPostsWithoutEmbeddings(int $limit = 100): Collection;
 
     /**
+     * @return Collection<int, Post>
+     */
+    public function searchByText(
+        string $query,
+        int $limit = 20,
+        ?int $sinceDays = null,
+        int $minViews = 0,
+        ?int $sourceId = null
+    ): Collection;
+
+    /**
      * @param  list<float>  $embedding
      */
     public function updateEmbedding(Post $post, array $embedding): bool;

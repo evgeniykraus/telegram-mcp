@@ -164,6 +164,50 @@ class PostRepository implements PostRepositoryInterface
     }
 
     /**
+     * @return Collection<int, Post>
+     */
+    public function searchByText(
+        string $query,
+        int $limit = 20,
+        ?int $sinceDays = null,
+        int $minViews = 0,
+        ?int $sourceId = null
+    ): Collection {
+        $trimmed = trim($query);
+        $fullTerm = '%'.mb_strtolower($trimmed).'%';
+        $words = array_filter(
+            preg_split('/[\s,\.\-_]+/u', mb_strtolower($trimmed)) ?: [],
+            fn (string $w) => mb_strlen($w) >= 3
+        );
+
+        $q = Post::query()
+            ->with('source')
+            ->whereNotNull('text')
+            ->where(function ($sub) use ($fullTerm, $words) {
+                $sub->whereRaw('LOWER(text) LIKE ?', [$fullTerm]);
+                foreach ($words as $w) {
+                    $sub->orWhereRaw('LOWER(text) LIKE ?', ["%{$w}%"]);
+                }
+            });
+
+        if ($sourceId !== null) {
+            $q->where('source_id', $sourceId);
+        }
+
+        if ($sinceDays !== null) {
+            $q->where('published_at', '>=', now()->subDays($sinceDays));
+        }
+
+        if ($minViews > 0) {
+            $q->where('views', '>=', $minViews);
+        }
+
+        return $q->orderByDesc('views')
+            ->limit($limit)
+            ->get();
+    }
+
+    /**
      * @param  list<float>  $embedding
      */
     public function updateEmbedding(Post $post, array $embedding): bool

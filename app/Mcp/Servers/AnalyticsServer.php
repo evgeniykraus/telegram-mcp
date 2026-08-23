@@ -9,11 +9,13 @@ use App\Mcp\Tools\BestTimeToPostTool;
 use App\Mcp\Tools\ChannelReportTool;
 use App\Mcp\Tools\ChannelStyleDnaTool;
 use App\Mcp\Tools\CollectChannelsTool;
+use App\Mcp\Tools\DiscoverChannelsTool;
 use App\Mcp\Tools\FindOutliersTool;
 use App\Mcp\Tools\FormatBreakdownTool;
 use App\Mcp\Tools\GetPostCommentsTool;
 use App\Mcp\Tools\GetPostTool;
 use App\Mcp\Tools\ReportTool;
+use App\Mcp\Tools\SearchGlobalNewsTool;
 use App\Mcp\Tools\SearchSimilarPostsTool;
 use App\Mcp\Tools\TopicSaturationTool;
 use App\Mcp\Tools\TopPostsTool;
@@ -25,7 +27,7 @@ use Laravel\Mcp\Server\Tool;
 
 #[Name('Social Analytics Server')]
 #[Version('1.0.0')]
-#[Instructions('This server provides social media and Telegram competitive intelligence, engagement metrics, format benchmarks, timing heatmaps, semantic vector search, viral anomaly detection, topic saturation, author style extraction, and content performance analytics.')]
+#[Instructions('This server provides social media and Telegram competitive intelligence, channel discovery, news search, engagement metrics, format benchmarks, timing heatmaps, semantic vector search, viral anomaly detection, topic saturation, author style extraction, and content performance analytics.')]
 class AnalyticsServer extends Server
 {
     /**
@@ -34,6 +36,8 @@ class AnalyticsServer extends Server
      * @var array<int, class-string<Tool>>
      */
     protected array $tools = [
+        DiscoverChannelsTool::class,
+        SearchGlobalNewsTool::class,
         CollectChannelsTool::class,
         ChannelReportTool::class,
         GetPostTool::class,
