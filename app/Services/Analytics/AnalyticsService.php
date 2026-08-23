@@ -46,6 +46,8 @@ class AnalyticsService
             throw new \InvalidArgumentException("Source channel '{$cleanUsername}' not found. Please collect it first.");
         }
 
+        $this->sourceRepository->touchQueried($source);
+
         $stats = $this->analyticsRepository->getChannelStats($source->id, $days);
         $bestPost = $stats['best_post'] ?? null;
         $reactionsSummary = $this->analyticsRepository->getReactionsSummary($source->id, $days);
@@ -90,6 +92,7 @@ class AnalyticsService
             if ($source === null) {
                 return [];
             }
+            $this->sourceRepository->touchQueried($source);
             $sourceId = $source->id;
         }
 
@@ -180,6 +183,7 @@ class AnalyticsService
             if ($source === null) {
                 return [];
             }
+            $this->sourceRepository->touchQueried($source);
             $sourceId = $source->id;
         }
 
@@ -194,10 +198,10 @@ class AnalyticsService
                 'format_type' => $item->format_type,
                 'posts_count' => $postsCount,
                 'total_views' => (int) $item->total_views,
-                'avg_views' => (float) $item->avg_views,
-                'avg_er' => (float) $item->avg_er,
+                'avg_views' => round((float) $item->avg_views, 2),
+                'avg_er' => round((float) $item->avg_er, 4),
                 'total_forwards' => (int) $item->total_forwards,
-                'avg_forwards' => (float) $item->avg_forwards,
+                'avg_forwards' => round((float) $item->avg_forwards, 2),
                 'share_of_posts' => $share,
             ]);
         })->values()->all();
@@ -215,6 +219,7 @@ class AnalyticsService
             if ($source === null) {
                 return [];
             }
+            $this->sourceRepository->touchQueried($source);
             $sourceId = $source->id;
         }
 
@@ -224,8 +229,8 @@ class AnalyticsService
         return $rawSlots->map(function ($slot) use ($dayNames): TimeSlotDto {
             $dow = (int) $slot->day_of_week;
             $dayName = $dayNames[$dow % 7] ?? 'Unknown';
-            $avgEr = (float) $slot->avg_er;
-            $avgViews = (float) $slot->avg_views;
+            $avgEr = round((float) $slot->avg_er, 4);
+            $avgViews = round((float) $slot->avg_views, 2);
             $performanceScore = round(($avgEr * 100 * 0.7) + ($avgViews * 0.001 * 0.3), 2);
 
             return TimeSlotDto::fromArray([
@@ -244,12 +249,12 @@ class AnalyticsService
     {
         $benchmarkData = $this->analyticsRepository->getCategoryBenchmark($category, $days);
 
-        $ownEr = (float) $benchmarkData['own_avg_er'];
-        $compEr = (float) $benchmarkData['competitor_avg_er'];
+        $ownEr = round((float) $benchmarkData['own_avg_er'], 4);
+        $compEr = round((float) $benchmarkData['competitor_avg_er'], 4);
         $erDiff = $compEr > 0 ? round((($ownEr - $compEr) / $compEr) * 100, 2) : 0.0;
 
-        $ownViews = (float) $benchmarkData['own_avg_views'];
-        $compViews = (float) $benchmarkData['competitor_avg_views'];
+        $ownViews = round((float) $benchmarkData['own_avg_views'], 2);
+        $compViews = round((float) $benchmarkData['competitor_avg_views'], 2);
         $viewsDiff = $compViews > 0 ? round((($ownViews - $compViews) / $compViews) * 100, 2) : 0.0;
 
         return BenchmarkDto::fromArray([
@@ -402,6 +407,7 @@ class AnalyticsService
             if ($source === null) {
                 return [];
             }
+            $this->sourceRepository->touchQueried($source);
             $sourceId = $source->id;
         }
 
@@ -424,11 +430,11 @@ class AnalyticsService
                 'reactions' => (int) $post->reactions,
                 'comments' => (int) $post->comments,
                 'forwards' => (int) $post->forwards,
-                'channel_median_views' => (float) ($post->getAttribute('channel_median_views') ?? 0.0),
-                'multiplier' => (float) ($post->getAttribute('multiplier') ?? 0.0),
-                'views_multiplier' => (float) ($post->getAttribute('views_multiplier') ?? 0.0),
-                'engagement_multiplier' => (float) ($post->getAttribute('engagement_multiplier') ?? 0.0),
-                'er' => (float) ($post->er ?? 0.0),
+                'channel_median_views' => round((float) ($post->getAttribute('channel_median_views') ?? 0.0), 2),
+                'multiplier' => round((float) ($post->getAttribute('multiplier') ?? 0.0), 2),
+                'views_multiplier' => round((float) ($post->getAttribute('views_multiplier') ?? 0.0), 2),
+                'engagement_multiplier' => round((float) ($post->getAttribute('engagement_multiplier') ?? 0.0), 2),
+                'er' => round((float) ($post->er ?? 0.0), 4),
                 'outlier_type' => (string) ($post->getAttribute('outlier_type') ?? 'viral_views'),
                 'format_type' => $post->format_type,
                 'hook' => $hook,
@@ -508,6 +514,8 @@ class AnalyticsService
             throw new \InvalidArgumentException("Channel '{$cleanUsername}' not found.");
         }
 
+        $this->sourceRepository->touchQueried($source);
+
         $posts = $this->postRepository->getRecentBySource($source->id, $samplePostsCount);
         if ($posts->isEmpty()) {
             throw new \InvalidArgumentException("No posts found for '{$cleanUsername}' to analyze style.");
@@ -539,32 +547,44 @@ class AnalyticsService
             $totalEmojis += count($emojiMatches[0] ?? []);
 
             // Detect dividers
-            if (str_contains($text, '━━━━') || str_contains($text, '----') || str_contains($text, '——')) {
-                $dividers['horizontal_lines'] = 'Использует горизонтальные разделители (━━━━ / ——)';
+            if (str_contains($text, '━━━━') || str_contains($text, '----') || str_contains($text, '——') || str_contains($text, '***')) {
+                $dividers['horizontal_lines'] = 'Использует горизонтальные разделители (━━━━ / —— / ***)';
             }
-            if (preg_match('/^[—–•\-]\s+/m', $text)) {
-                $dividers['bullet_lists'] = 'Использует маркированные списки с тире (— ...)';
+            if (preg_match('/^[—–•\-*]\s+/m', $text)) {
+                $dividers['bullet_lists'] = 'Использует маркированные списки с тире или маркерами (— ...)';
+            }
+            if (preg_match('/^[🪙🗿🛡🎸⚡️🐱🐈🔥📌🔹🔸▪️▫️]\s+/mu', $text)) {
+                $dividers['emoji_bullet_headers'] = 'Использует тематические эмодзи-маркеры для смысловых блоков';
             }
 
             // Hook types
             $firstLine = $paragraphs[0] ?? '';
-            if (preg_match('/^(?:🔖|📖|📄|📊|💡|🔥)/u', $firstLine)) {
-                $hookTypes['emoji_badge_heading'] = 'Эмодзи-плашка в начале заголовка (🔖🔖 / 📖 / 📄)';
+            if (preg_match('/^(?:🔖|📖|📄|📊|💡|🔥|⚡️|🎸|🐱|🐈|🚀|🎯|✨)/u', $firstLine)) {
+                $hookTypes['emoji_badge_heading'] = 'Эмодзи-плашка в начале заголовка (🔖 / ⚡️ / 🎸 / 💡)';
             }
-            if (preg_match('/^(?:Кейс|Отчёт|Инструкция|Разбор)/ui', $firstLine)) {
+            if (preg_match('/^(?:Кейс|Отчёт|Инструкция|Разбор|Апдейт|Дайджест|Обзор|Новость)/ui', $firstLine)) {
                 $hookTypes['case_report_heading'] = 'Рубрикаторы («Кейс: ...», «Отчёт: ...», «Инструкция: ...»)';
             }
             if (preg_match('/\d+/u', $firstLine) && (str_contains($firstLine, '₽') || str_contains($firstLine, '$') || str_contains($firstLine, 'тысяч') || str_contains($firstLine, '%'))) {
                 $hookTypes['numbers_and_money'] = 'Числовые факты и метрики в первой строке';
             }
+            if (preg_match('/^(?:Чиним|Поднимаем|Даем|Экономим|Делаем|Как|Почему|Разбираем)/ui', $firstLine)) {
+                $hookTypes['action_verb_hook'] = 'Глагольный хук действия в заголовке («Чиним...», «Поднимаем...», «Экономим...»)';
+            }
 
             // CTA types
             $lastLines = implode(' ', array_slice($paragraphs, -2));
-            if (str_contains($lastLines, '👇') || str_contains($lastLines, 'ссылк') || str_contains($lastLines, 'кнопк') || str_contains($lastLines, 'забирай')) {
+            if (str_contains($lastLines, '👇') || str_contains($lastLines, 'ссылк') || str_contains($lastLines, 'кнопк') || str_contains($lastLines, 'забирай') || str_contains($lastLines, 'скачать')) {
                 $ctas['benefit_lead_magnet'] = 'Выдача пользы/лид-магнита за клик/переход («Жми на кнопку 👇», «Забирай по ссылке»)';
             }
-            if (str_contains($lastLines, '?') && (str_contains($lastLines, 'Как у вас') || str_contains($lastLines, 'Что думаете'))) {
+            if (str_contains($lastLines, '?') && (str_contains($lastLines, 'Как у вас') || str_contains($lastLines, 'Что думаете') || str_contains($lastLines, 'поделитесь'))) {
                 $ctas['open_question_comment'] = 'Открытый вовлекающий вопрос в конце поста';
+            }
+            if (preg_match('/(?:Помните|один ключ|все модели|подписывайся|подпишись|ссылка в закрепе)/ui', $lastLines)) {
+                $ctas['signature_brand_slogan'] = 'Фирменный слоган / подвал канала («Помните, один ключ — все модели!»)';
+            }
+            if (preg_match('/(?:npx\s+|pip\s+install|git\s+clone)/ui', $text)) {
+                $ctas['installation_snippet'] = 'Инструкция по установке утилиты (npx / pip install)';
             }
         }
 

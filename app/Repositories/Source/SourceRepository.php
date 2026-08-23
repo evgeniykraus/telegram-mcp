@@ -53,4 +53,51 @@ class SourceRepository implements SourceRepositoryInterface
     {
         return Source::query()->get();
     }
+
+    public function touchQueried(Source|string $sourceOrUsername): void
+    {
+        if ($sourceOrUsername instanceof Source) {
+            $sourceOrUsername->update([
+                'last_queried_at' => now(),
+                'is_active' => true,
+            ]);
+
+            return;
+        }
+
+        $normalized = str_starts_with($sourceOrUsername, '@') ? $sourceOrUsername : '@'.$sourceOrUsername;
+        Source::query()
+            ->where('username', $normalized)
+            ->update([
+                'last_queried_at' => now(),
+                'is_active' => true,
+            ]);
+    }
+
+    /**
+     * @return Collection<int, Source>
+     */
+    public function getActiveTracked(int $ttlDays = 14): Collection
+    {
+        return Source::query()
+            ->activeTracked($ttlDays)
+            ->get();
+    }
+
+    /**
+     * @return Collection<int, Source>
+     */
+    public function getExpired(int $ttlDays = 14): Collection
+    {
+        return Source::query()
+            ->expired($ttlDays)
+            ->get();
+    }
+
+    public function deleteSourceWithData(Source $source): void
+    {
+        $source->posts()->delete();
+        $source->collectionRuns()->delete();
+        $source->delete();
+    }
 }

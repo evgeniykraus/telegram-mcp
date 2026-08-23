@@ -26,4 +26,18 @@ interface SourceRepositoryInterface
      * @return Collection<int, Source>
      */
     public function all(): Collection;
+
+    public function touchQueried(Source|string $sourceOrUsername): void;
+
+    /**
+     * @return Collection<int, Source>
+     */
+    public function getActiveTracked(int $ttlDays = 14): Collection;
+
+    /**
+     * @return Collection<int, Source>
+     */
+    public function getExpired(int $ttlDays = 14): Collection;
+
+    public function deleteSourceWithData(Source $source): void;
 }

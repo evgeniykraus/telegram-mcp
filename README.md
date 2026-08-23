@@ -95,87 +95,48 @@ vendor/bin/sail artisan migrate
 
 ---
 
-## 📥 Сбор данных через консоль
+## 📥 Сбор данных, Актуализация и Умный Кэш (TTL 14 дней)
 
-Вы можете запустить сбор публикаций вручную через Artisan:
+Архитектура сервера работает по модели **Smart Analytical Cache**:
+- **Отслеживание интереса**: любое обращение к каналу через любой MCP-инструмент фиксирует временную метку `last_queried_at` и продлевает нахождение канала в активном пуле на 14 дней.
+- **Фоновый воркер `scheduler`**: отдельный сервис в `compose.yaml`, ежечасно актуализирующий метрики постов и векторные эмбеддинги для всех активных каналов.
+- **Авто-очистка (`postiz:prune`)**: ежедневно удаляет каналы, к которым не было обращений более 14 дней (кроме ваших собственных `is_own = true`), гарантируя, что база данных не переполняется.
 
 ```bash
 # Синхронный сбор последних 100 постов канала @durov
 vendor/bin/sail artisan postiz:collect --channels=@durov --limit=100
 
-# Сбор постов нескольких каналов в фоновую очередь (Redis)
-vendor/bin/sail artisan postiz:collect --channels=@durov,@telegram --limit=200 --since-days=30 --queue
+# Ежечасная актуализация всех активных каналов (запрашивавшихся за последние 14 дней)
+vendor/bin/sail artisan postiz:refresh --limit=50 --days=2
+
+# Ручная очистка каналов без активности более 14 дней
+vendor/bin/sail artisan postiz:prune --ttl=14
 
 # Фоновая генерация векторных эмбеддингов (bge-m3) для постов без векторов
 vendor/bin/sail artisan postiz:embed --limit=100
 ```
 
-*Сбор каналов также автоматически настроен в планировщике (`routes/console.php`) на ежедневный запуск в 06:00.*
+*Расписание задач (`routes/console.php`):*
+* `postiz:refresh` — каждый час (`0 * * * *`).
+* `postiz:prune` — ежедневно в 03:00 (`0 3 * * *`).
 
 ---
 
-## 🔌 Подключение MCP-сервера к AI-клиентам
+## 🔌 Подключение MCP-сервера по HTTP
 
-Сервер `postiz-mcp` работает через **stdio** транспорт с помощью команды `php artisan mcp:start analytics`.
+Сервер `postiz-mcp` работает по современному стандарту **HTTP / Stream transport** через эндпоинт `http://localhost/mcp/analytics` (или `http://localhost:80/mcp/analytics` при запущенном Sail / Nginx).
 
-### 1. Claude Desktop
+### 1. Подключение через `.mcp.json` (Antigravity / Claude Code / Windsurf / Cursor)
 
-Откройте файл конфигурации Claude Desktop:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-Добавьте секцию `postiz-analytics`:
-
-#### Вариант A (через Laravel Sail / Docker):
 ```json
 {
-  "mcpServers": {
-    "postiz-analytics": {
-      "command": "/usr/local/bin/docker",
-      "args": [
-        "compose",
-        "-f",
-        "/Users/evgen/PhpstormProjects/postiz-mcp/compose.yaml",
-        "exec",
-        "-T",
-        "laravel.test",
-        "php",
-        "artisan",
-        "mcp:start",
-        "analytics"
-      ]
+    "mcpServers": {
+        "postiz-analytics": {
+            "url": "http://localhost/mcp/analytics"
+        }
     }
-  }
 }
 ```
-
-#### Вариант B (локальный запуск на хосте с установленным PHP):
-```json
-{
-  "mcpServers": {
-    "postiz-analytics": {
-      "command": "php",
-      "args": [
-        "/Users/evgen/PhpstormProjects/postiz-mcp/artisan",
-        "mcp:start",
-        "analytics"
-      ],
-      "env": {
-        "DB_CONNECTION": "pgsql",
-        "DB_HOST": "127.0.0.1",
-        "DB_PORT": "5432",
-        "DB_DATABASE": "laravel",
-        "DB_USERNAME": "sail",
-        "DB_PASSWORD": "password",
-        "EMBEDDING_MODEL": "bge-m3",
-        "EMBEDDING_DIMENSION": "1024"
-      }
-    }
-  }
-}
-```
-
----
 
 ### 2. Cursor IDE
 
@@ -183,33 +144,21 @@ vendor/bin/sail artisan postiz:embed --limit=100
 2. Нажмите **+ Add New MCP Server**.
 3. Заполните поля:
    - **Name**: `postiz-analytics`
-   - **Type**: `command`
-   - **Command**: `php /Users/evgen/PhpstormProjects/postiz-mcp/artisan mcp:start analytics`
+   - **Type**: `sse` / `http`
+   - **URL**: `http://localhost/mcp/analytics`
 
-Либо создайте файл `.cursor/mcp.json` в корне вашего проекта:
+### 3. Claude Desktop
+
+В файле конфигурации Claude Desktop (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
     "postiz-analytics": {
-      "command": "php",
-      "args": [
-        "/Users/evgen/PhpstormProjects/postiz-mcp/artisan",
-        "mcp:start",
-        "analytics"
-      ]
+      "url": "http://localhost/mcp/analytics"
     }
   }
 }
 ```
-
----
-
-### 3. Claude Code CLI / Antigravity
-
-Файл `.mcp.json` уже настроен в корне проекта:
-```json
-{
-    "mcpServers": {
         "postiz-analytics": {
             "command": "vendor/bin/sail",
             "args": [

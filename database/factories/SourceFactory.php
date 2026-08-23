@@ -27,6 +27,7 @@ class SourceFactory extends Factory
             'is_own' => false,
             'category' => fake()->randomElement(['tech', 'crypto', 'marketing', 'news', 'business']),
             'last_collected_at' => now(),
+            'last_queried_at' => now(),
         ];
     }
 

@@ -8,12 +8,8 @@
             ]
         },
         "postiz-analytics": {
-            "command": "vendor/bin/sail",
-            "args": [
-                "artisan",
-                "mcp:start",
-                "analytics"
-            ]
+            "type": "http",
+            "url": "http://localhost/mcp/analytics"
         }
     }
 }

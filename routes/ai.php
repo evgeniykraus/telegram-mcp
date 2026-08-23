@@ -3,4 +3,4 @@
 use App\Mcp\Servers\AnalyticsServer;
 use Laravel\Mcp\Facades\Mcp;
 
-Mcp::local('analytics', AnalyticsServer::class);
+Mcp::web('/mcp/analytics', AnalyticsServer::class);

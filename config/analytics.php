@@ -19,4 +19,10 @@ return [
         'batch_size' => (int) env('EMBEDDING_BATCH_SIZE', 50),
         'timeout' => (int) env('EMBEDDING_TIMEOUT', 30),
     ],
+
+    'cache' => [
+        'ttl_days' => (int) env('ANALYTICS_SOURCE_TTL_DAYS', 14),
+        'refresh_limit' => (int) env('ANALYTICS_REFRESH_LIMIT', 50),
+        'refresh_since_days' => (int) env('ANALYTICS_REFRESH_SINCE_DAYS', 2),
+    ],
 ];

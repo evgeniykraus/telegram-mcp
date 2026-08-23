@@ -2,14 +2,20 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-use Illuminate\Support\Facades\Schedule;
+// Hourly refresh of active tracked channels (within 14-day TTL window) and embeddings
+Schedule::command('postiz:refresh')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();
 
-Schedule::command('postiz:collect')
-    ->dailyAt('06:00')
+// Daily pruning of expired idle channels and cache cleanup at 03:00
+Schedule::command('postiz:prune')
+    ->dailyAt('03:00')
     ->withoutOverlapping()
     ->runInBackground();

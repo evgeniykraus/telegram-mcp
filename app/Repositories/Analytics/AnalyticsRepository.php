@@ -41,9 +41,9 @@ class AnalyticsRepository implements AnalyticsRepositoryInterface
         return [
             'total_posts' => (int) ($stats->total_posts ?? 0),
             'total_views' => (int) ($stats->total_views ?? 0),
-            'avg_views' => (float) ($stats->avg_views ?? 0.0),
-            'avg_er' => (float) ($stats->avg_er ?? 0.0),
-            'best_er' => (float) ($stats->best_er ?? 0.0),
+            'avg_views' => round((float) ($stats->avg_views ?? 0.0), 2),
+            'avg_er' => round((float) ($stats->avg_er ?? 0.0), 4),
+            'best_er' => round((float) ($stats->best_er ?? 0.0), 4),
             'total_forwards' => (int) ($stats->total_forwards ?? 0),
             'total_reactions' => (int) ($stats->total_reactions ?? 0),
             'total_comments' => (int) ($stats->total_comments ?? 0),

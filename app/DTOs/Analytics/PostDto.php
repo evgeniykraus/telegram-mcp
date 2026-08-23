@@ -46,12 +46,12 @@ readonly class PostDto
             forwards: (int) ($data['forwards'] ?? 0),
             reactions: (int) ($data['reactions'] ?? 0),
             comments: (int) ($data['comments'] ?? 0),
-            er: (float) ($data['er'] ?? 0.0),
-            contentScore: (float) ($data['content_score'] ?? 0.0),
-            viralFactor: (float) ($data['viral_factor'] ?? 0.0),
-            discussionIndex: (float) ($data['discussion_index'] ?? 0.0),
+            er: round((float) ($data['er'] ?? 0.0), 4),
+            contentScore: round((float) ($data['content_score'] ?? 0.0), 2),
+            viralFactor: round((float) ($data['viral_factor'] ?? 0.0), 2),
+            discussionIndex: round((float) ($data['discussion_index'] ?? 0.0), 2),
             isAd: (bool) ($data['is_ad'] ?? false),
-            reactionsBreakdown: $data['reactions_breakdown'] ?? null,
+            reactionsBreakdown: ! empty($data['reactions_breakdown']) ? (array) $data['reactions_breakdown'] : null,
         );
     }
 
@@ -73,12 +73,12 @@ readonly class PostDto
             'forwards' => $this->forwards,
             'reactions' => $this->reactions,
             'comments' => $this->comments,
-            'er' => $this->er,
-            'content_score' => $this->contentScore,
-            'viral_factor' => $this->viralFactor,
-            'discussion_index' => $this->discussionIndex,
+            'er' => round($this->er, 4),
+            'content_score' => round($this->contentScore, 2),
+            'viral_factor' => round($this->viralFactor, 2),
+            'discussion_index' => round($this->discussionIndex, 2),
             'is_ad' => $this->isAd,
-            'reactions_breakdown' => $this->reactionsBreakdown,
+            'reactions_breakdown' => $this->reactionsBreakdown ?? [],
         ];
     }
 
@@ -93,7 +93,7 @@ readonly class PostDto
         $isTruncated = mb_strlen($rawText) > $maxLength;
         $previewText = $isTruncated ? mb_substr($rawText, 0, $maxLength).'...' : $rawText;
 
-        return [
+        $preview = [
             'id' => $this->id,
             'source_username' => $this->sourceUsername,
             'url' => $this->url,
@@ -104,11 +104,16 @@ readonly class PostDto
             'views' => $this->views,
             'forwards' => $this->forwards,
             'reactions' => $this->reactions,
-            'reactions_breakdown' => $this->reactionsBreakdown,
             'comments' => $this->comments,
-            'er' => $this->er,
-            'content_score' => $this->contentScore,
+            'er' => round($this->er, 4),
+            'content_score' => round($this->contentScore, 2),
             'is_ad' => $this->isAd,
         ];
+
+        if (! empty($this->reactionsBreakdown)) {
+            $preview['reactions_breakdown'] = $this->reactionsBreakdown;
+        }
+
+        return $preview;
     }
 }
