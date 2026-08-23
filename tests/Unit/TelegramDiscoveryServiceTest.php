@@ -5,6 +5,7 @@ namespace Tests\Unit;
 use App\DTOs\Analytics\DiscoveredChannelDto;
 use App\DTOs\Analytics\GlobalPostDto;
 use App\Factories\CustomMadelineProtoFactory;
+use App\Repositories\Post\PostRepository;
 use App\Repositories\Source\SourceRepository;
 use App\Services\Collection\TelegramDiscoveryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -22,6 +23,7 @@ class TelegramDiscoveryServiceTest extends TestCase
         $service = new TelegramDiscoveryService(
             madelineProtoFactory: $factory,
             sourceRepository: new SourceRepository,
+            postRepository: new PostRepository,
         );
 
         $channels = $service->discoverChannels('нейросети', limit: 10);

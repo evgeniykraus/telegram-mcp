@@ -12,12 +12,15 @@ use App\Mcp\Tools\BenchmarkTool;
 use App\Mcp\Tools\BestTimeToPostTool;
 use App\Mcp\Tools\ChannelReportTool;
 use App\Mcp\Tools\ChannelStyleDnaTool;
+use App\Mcp\Tools\ClusterStorylinesTool;
 use App\Mcp\Tools\CollectChannelsTool;
+use App\Mcp\Tools\CommentIntelligenceTool;
 use App\Mcp\Tools\DiscoverChannelsTool;
 use App\Mcp\Tools\FindOutliersTool;
 use App\Mcp\Tools\FormatBreakdownTool;
 use App\Mcp\Tools\GetPostCommentsTool;
 use App\Mcp\Tools\GetPostTool;
+use App\Mcp\Tools\LatestPostsTool;
 use App\Mcp\Tools\ReportTool;
 use App\Mcp\Tools\SearchGlobalNewsTool;
 use App\Mcp\Tools\SearchSimilarPostsTool;
@@ -26,8 +29,10 @@ use App\Mcp\Tools\TopPostsTool;
 use App\Models\CollectionRun;
 use App\Models\Post;
 use App\Models\Source;
+use App\Services\Analytics\AnalyticsService;
 use App\Services\Collection\TelegramCollectionService;
 use App\Services\Collection\TelegramDiscoveryService;
+use App\Services\Storyline\StorylineService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\Fluent\AssertableJson;
@@ -598,5 +603,109 @@ class AnalyticsServerTest extends TestCase
         $response->assertOk();
         $response->assertSee('@tech_breaking');
         $response->assertSee('языковых моделей');
+    }
+
+    public function test_latest_posts_tool(): void
+    {
+        $mockService = $this->createMock(TelegramCollectionService::class);
+        $mockService->method('fetchRecentPosts')->willReturn([
+            [
+                'id' => '101',
+                'external_id' => '101',
+                'channel_username' => '@newschan',
+                'url' => 'https://t.me/newschan/101',
+                'published_at' => now()->toDateTimeString(),
+                'text' => 'Свежая новость о запуске',
+                'views' => 1200,
+                'forwards' => 30,
+                'reactions' => 50,
+                'er' => 0.02,
+                'content_score' => 10.5,
+            ],
+        ]);
+        $this->app->instance(TelegramCollectionService::class, $mockService);
+
+        $response = AnalyticsServer::tool(LatestPostsTool::class, [
+            'channels' => '@newschan',
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('Свежая новость');
+        $response->assertSee('@newschan');
+    }
+
+    public function test_get_post_comments_tool_shows_pagination_hint(): void
+    {
+        $mockService = $this->createMock(TelegramCollectionService::class);
+        $mockService->method('fetchPostComments')->willReturn([
+            'channel' => '@commentchan',
+            'post_id' => 100,
+            'total_comments' => 300,
+            'fetched_count' => 200,
+            'next_offset_id' => 45,
+            'has_more' => true,
+            'thread_dialogue' => '• [12:00] Комментарий',
+            'comments' => [],
+        ]);
+        $this->app->instance(TelegramCollectionService::class, $mockService);
+
+        $response = AnalyticsServer::tool(GetPostCommentsTool::class, [
+            'post_id_or_url' => 'https://t.me/commentchan/100',
+            'format' => 'compact_text',
+            'limit' => 200,
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('More comments available');
+        $response->assertSee('offset_id=45');
+    }
+
+    public function test_cluster_storylines_tool(): void
+    {
+        $mockService = $this->createMock(StorylineService::class);
+        $mockService->method('clusterStorylines')->willReturn([
+            'days' => 3,
+            'posts_scanned' => 4,
+            'storylines_count' => 1,
+            'storylines' => [[
+                'headline' => 'Один и тот же анонс на четырёх каналах',
+                'channels' => ['@a', '@b', '@c', '@d'],
+                'corroborated' => true,
+                'post_count' => 4,
+                'first_seen_at' => now()->toDateTimeString(),
+                'last_seen_at' => now()->toDateTimeString(),
+                'posts' => [],
+            ]],
+        ]);
+        $this->app->instance(StorylineService::class, $mockService);
+
+        $response = AnalyticsServer::tool(ClusterStorylinesTool::class, []);
+
+        $response->assertOk();
+        $response->assertSee('Один и тот же анонс');
+        $response->assertSee('corroborated');
+    }
+
+    public function test_comment_intelligence_tool(): void
+    {
+        $mockService = $this->createMock(AnalyticsService::class);
+        $mockService->method('getCommentIntelligence')->willReturn([
+            'channel' => '@chan',
+            'post_id' => 100,
+            'total_comments' => 10,
+            'analyzed_comments' => 8,
+            'top_districts' => [['district' => 'центр', 'mentions' => 5]],
+            'dominant_complaints' => [['complaint' => 'не работает', 'mentions' => 3, 'example' => 'у меня не работает приложение']],
+        ]);
+        $this->app->instance(AnalyticsService::class, $mockService);
+
+        $response = AnalyticsServer::tool(CommentIntelligenceTool::class, [
+            'post_id_or_url' => 'https://t.me/chan/100',
+        ]);
+
+        $response->assertOk();
+        $response->assertSee('top_districts');
+        $response->assertSee('центр');
+        $response->assertSee('dominant_complaints');
     }
 }

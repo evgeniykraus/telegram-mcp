@@ -4,6 +4,7 @@ namespace App\Repositories\Post;
 
 use App\Models\Post;
 use App\Repositories\Post\Contracts\PostRepositoryInterface;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -117,6 +118,22 @@ class PostRepository implements PostRepositoryInterface
     /**
      * @return Collection<int, Post>
      */
+    public function getRecentAcrossSources(?Carbon $since = null, int $limit = 200): Collection
+    {
+        $query = Post::query()
+            ->with('source')
+            ->whereNotNull('text');
+
+        if ($since !== null) {
+            $query->where('published_at', '>=', $since);
+        }
+
+        return $query->orderByDesc('published_at')->limit($limit)->get();
+    }
+
+    /**
+     * @return Collection<int, Post>
+     */
     public function getPostsForMetricsRefresh(int $sinceDays, ?int $sourceId = null): Collection
     {
         $query = Post::query()
@@ -185,7 +202,7 @@ class PostRepository implements PostRepositoryInterface
     public function searchByText(
         string $query,
         int $limit = 20,
-        ?int $sinceDays = null,
+        ?Carbon $since = null,
         int $minViews = 0,
         ?int $sourceId = null
     ): Collection {
@@ -210,8 +227,8 @@ class PostRepository implements PostRepositoryInterface
             $q->where('source_id', $sourceId);
         }
 
-        if ($sinceDays !== null) {
-            $q->where('published_at', '>=', now()->subDays($sinceDays));
+        if ($since !== null) {
+            $q->where('published_at', '>=', $since);
         }
 
         if ($minViews > 0) {

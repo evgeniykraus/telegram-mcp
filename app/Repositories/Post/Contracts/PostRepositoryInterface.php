@@ -3,6 +3,7 @@
 namespace App\Repositories\Post\Contracts;
 
 use App\Models\Post;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 
 interface PostRepositoryInterface
@@ -35,6 +36,11 @@ interface PostRepositoryInterface
     /**
      * @return Collection<int, Post>
      */
+    public function getRecentAcrossSources(?Carbon $since = null, int $limit = 200): Collection;
+
+    /**
+     * @return Collection<int, Post>
+     */
     public function getPostsForMetricsRefresh(int $sinceDays, ?int $sourceId = null): Collection;
 
     /**
@@ -59,7 +65,7 @@ interface PostRepositoryInterface
     public function searchByText(
         string $query,
         int $limit = 20,
-        ?int $sinceDays = null,
+        ?Carbon $since = null,
         int $minViews = 0,
         ?int $sourceId = null
     ): Collection;

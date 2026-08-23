@@ -8,12 +8,15 @@ use App\Mcp\Tools\BenchmarkTool;
 use App\Mcp\Tools\BestTimeToPostTool;
 use App\Mcp\Tools\ChannelReportTool;
 use App\Mcp\Tools\ChannelStyleDnaTool;
+use App\Mcp\Tools\ClusterStorylinesTool;
 use App\Mcp\Tools\CollectChannelsTool;
+use App\Mcp\Tools\CommentIntelligenceTool;
 use App\Mcp\Tools\DiscoverChannelsTool;
 use App\Mcp\Tools\FindOutliersTool;
 use App\Mcp\Tools\FormatBreakdownTool;
 use App\Mcp\Tools\GetPostCommentsTool;
 use App\Mcp\Tools\GetPostTool;
+use App\Mcp\Tools\LatestPostsTool;
 use App\Mcp\Tools\ReportTool;
 use App\Mcp\Tools\SearchGlobalNewsTool;
 use App\Mcp\Tools\SearchSimilarPostsTool;
@@ -38,10 +41,13 @@ class AnalyticsServer extends Server
     protected array $tools = [
         DiscoverChannelsTool::class,
         SearchGlobalNewsTool::class,
+        ClusterStorylinesTool::class,
         CollectChannelsTool::class,
+        LatestPostsTool::class,
         ChannelReportTool::class,
         GetPostTool::class,
         GetPostCommentsTool::class,
+        CommentIntelligenceTool::class,
         TopPostsTool::class,
         FindOutliersTool::class,
         TopicSaturationTool::class,

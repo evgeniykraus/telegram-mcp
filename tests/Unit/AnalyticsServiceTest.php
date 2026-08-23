@@ -8,6 +8,7 @@ use App\Repositories\Analytics\Contracts\AnalyticsRepositoryInterface;
 use App\Repositories\Post\Contracts\PostRepositoryInterface;
 use App\Repositories\Source\Contracts\SourceRepositoryInterface;
 use App\Services\Analytics\AnalyticsService;
+use App\Services\Collection\TelegramCollectionService;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -108,5 +109,36 @@ class AnalyticsServiceTest extends TestCase
         $this->assertSame($post->id, $topPosts[0]->id);
         $this->assertSame(5000, $topPosts[0]->views);
         $this->assertSame(0.11, $topPosts[0]->er);
+    }
+
+    public function test_get_comment_intelligence_extracts_districts_and_complaints(): void
+    {
+        $collectionService = $this->createMock(TelegramCollectionService::class);
+        $collectionService->method('fetchPostComments')->willReturn([
+            'channel' => '@chan',
+            'post_id' => 100,
+            'total_comments' => 2,
+            'fetched_count' => 2,
+            'thread_dialogue' => '',
+            'comments' => [
+                ['text' => 'В центре города не работает интернет'],
+                ['text' => 'У нас тоже сбой, жалобы по всему району'],
+            ],
+        ]);
+
+        $service = new AnalyticsService(
+            $this->analyticsRepo,
+            $this->sourceRepo,
+            $this->postRepo,
+            null,
+            $collectionService,
+        );
+
+        $result = $service->getCommentIntelligence('https://t.me/chan/100', 200);
+
+        $this->assertSame(2, $result['analyzed_comments']);
+        $this->assertSame(1, $result['top_districts'][0]['mentions'] ?? null);
+        $this->assertSame('центр', $result['top_districts'][0]['district'] ?? null);
+        $this->assertNotEmpty($result['dominant_complaints']);
     }
 }

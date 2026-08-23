@@ -180,6 +180,59 @@ class TelegramCollectionService
     }
 
     /**
+     * Fetch the latest posts from one or more channels on the fly (list, not counters).
+     *
+     * @param  list<string>  $channels
+     * @return list<array<string, mixed>>
+     */
+    public function fetchRecentPosts(array $channels, ?Carbon $since = null, int $limit = 100): array
+    {
+        $api = $this->madelineProtoFactory->get();
+        $posts = [];
+
+        foreach ($channels as $channel) {
+            $cleanUsername = TelegramHelper::normalizeUsername($channel) ?? $channel;
+            $source = $this->sourceRepository->firstOrCreate(
+                ['username' => $cleanUsername, 'source_type' => 'telegram'],
+                ['title' => $cleanUsername, 'is_active' => true]
+            );
+
+            try {
+                $messages = $this->paginateHistory(
+                    fn (int $offsetId, int $batchLimit): array => $api->messages->getHistory([
+                        'peer' => $cleanUsername,
+                        'limit' => $batchLimit,
+                        'offset_id' => $offsetId,
+                        'offset_date' => 0,
+                        'add_offset' => 0,
+                        'max_id' => 0,
+                        'min_id' => 0,
+                        'hash' => 0,
+                    ])['messages'] ?? [],
+                    $limit,
+                    $since
+                );
+
+                foreach ($messages as $message) {
+                    if (! is_array($message) || ($message['_'] ?? '') !== 'message') {
+                        continue;
+                    }
+
+                    $normalized = $this->normalizeMessage($message, $source->id, $cleanUsername);
+                    if ($normalized !== null) {
+                        $normalized['channel_username'] = $cleanUsername;
+                        $posts[] = $normalized;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Failed to fetch recent posts for {$cleanUsername}: ".$e->getMessage());
+            }
+        }
+
+        return $posts;
+    }
+
+    /**
      * @param  array<string, mixed>  $message
      * @return array<string, mixed>|null
      */
@@ -426,8 +479,13 @@ class TelegramCollectionService
     /**
      * @return array<string, mixed>
      */
-    public function fetchPostComments(string $channelUsername, int|string $postId, int $limit = 20): array
-    {
+    public function fetchPostComments(
+        string $channelUsername,
+        int|string $postId,
+        int $limit = 20,
+        ?int $offsetId = null,
+        ?int $sinceId = null,
+    ): array {
         $cleanUsername = TelegramHelper::normalizeUsername($channelUsername) ?? $channelUsername;
 
         try {
@@ -445,6 +503,8 @@ class TelegramCollectionService
                     'post_id' => (int) $postId,
                     'total_comments' => 0,
                     'fetched_count' => 0,
+                    'next_offset_id' => null,
+                    'has_more' => false,
                     'thread_dialogue' => '',
                     'comments' => [],
                     'note' => 'No linked discussion group found for this channel',
@@ -452,37 +512,35 @@ class TelegramCollectionService
             }
 
             $unreadCount = (int) ($disc['unread_count'] ?? 0);
-
-            $replies = $api->messages->getReplies([
-                'peer' => $cleanUsername,
-                'msg_id' => (int) $postId,
-                'offset_id' => 0,
-                'offset_date' => 0,
-                'add_offset' => 0,
-                'limit' => min($limit, 50),
-                'max_id' => 0,
-                'min_id' => 0,
-                'hash' => 0,
-            ]);
-
             $commentsList = [];
+            $nextOffsetId = null;
 
-            foreach ($replies['messages'] ?? [] as $m) {
-                if (is_array($m) && ! empty($m['message'])) {
-                    $text = trim($m['message']);
-                    $replyToId = $m['reply_to']['reply_to_msg_id'] ?? null;
-                    $dateStr = isset($m['date']) ? Carbon::createFromTimestamp($m['date'])->toDateTimeString() : null;
-                    $timeStr = isset($m['date']) ? Carbon::createFromTimestamp($m['date'])->format('H:i') : '';
-                    $isAuthor = ! empty($m['post']) || ($m['from_id']['channel_id'] ?? null) === ($chat['id'] ?? null);
+            if ($sinceId !== null) {
+                $commentsList = $this->parseReplyMessages(
+                    $this->fetchRepliesPage($api, $cleanUsername, (int) $postId, $limit, 0, $sinceId, 0),
+                    $chat
+                );
+            } else {
+                $cursor = $offsetId ?? 0;
 
-                    $commentsList[] = [
-                        'id' => $m['id'],
-                        'reply_to_msg_id' => $replyToId,
-                        'is_author' => $isAuthor,
-                        'time' => $timeStr,
-                        'text' => $text,
-                        'date' => $dateStr,
-                    ];
+                while (count($commentsList) < $limit) {
+                    $pageSize = min($limit - count($commentsList), 100);
+                    $messages = $this->fetchRepliesPage($api, $cleanUsername, (int) $postId, $pageSize, $cursor, 0, 0);
+                    $page = $this->parseReplyMessages($messages, $chat);
+
+                    if ($page === []) {
+                        $nextOffsetId = null;
+                        break;
+                    }
+
+                    $commentsList = array_merge($commentsList, $page);
+                    $cursor = (int) ($messages[array_key_last($messages)]['id'] ?? 0);
+                    $nextOffsetId = $cursor;
+
+                    if (count($messages) < $pageSize) {
+                        $nextOffsetId = null;
+                        break;
+                    }
                 }
             }
 
@@ -491,6 +549,8 @@ class TelegramCollectionService
                 'post_id' => (int) $postId,
                 'total_comments' => $unreadCount > 0 ? $unreadCount : count($commentsList),
                 'fetched_count' => count($commentsList),
+                'next_offset_id' => $nextOffsetId,
+                'has_more' => $nextOffsetId !== null,
                 'thread_dialogue' => $this->buildCommentDialogue($commentsList),
                 'comments' => $commentsList,
             ];
@@ -502,11 +562,66 @@ class TelegramCollectionService
                 'post_id' => (int) $postId,
                 'total_comments' => 0,
                 'fetched_count' => 0,
+                'next_offset_id' => null,
+                'has_more' => false,
                 'thread_dialogue' => '',
                 'comments' => [],
                 'error' => $e->getMessage(),
             ];
         }
+    }
+
+    /**
+     * Fetch a single page of replies via messages.getReplies.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function fetchRepliesPage(mixed $api, string $channelUsername, int $postId, int $limit, int $offsetId, int $minId, int $maxId): array
+    {
+        $replies = $api->messages->getReplies([
+            'peer' => $channelUsername,
+            'msg_id' => $postId,
+            'offset_id' => $offsetId,
+            'offset_date' => 0,
+            'add_offset' => 0,
+            'limit' => min($limit, 100),
+            'max_id' => $maxId,
+            'min_id' => $minId,
+            'hash' => 0,
+        ]);
+
+        return $replies['messages'] ?? [];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $messages
+     * @param  array<string, mixed>  $chat
+     * @return list<array<string, mixed>>
+     */
+    private function parseReplyMessages(array $messages, array $chat): array
+    {
+        $commentsList = [];
+
+        foreach ($messages as $m) {
+            if (is_array($m) && ! empty($m['message'])) {
+                $text = trim($m['message']);
+                $replyToId = $m['reply_to']['reply_to_msg_id'] ?? null;
+                $dateStr = isset($m['date']) ? Carbon::createFromTimestamp($m['date'])->toDateTimeString() : null;
+                $timeStr = isset($m['date']) ? Carbon::createFromTimestamp($m['date'])->format('H:i') : '';
+                $isAuthor = ! empty($m['post']) || ($m['from_id']['channel_id'] ?? null) === ($chat['id'] ?? null);
+
+                $commentsList[] = [
+                    'id' => $m['id'],
+                    'reply_to_msg_id' => $replyToId,
+                    'is_author' => $isAuthor,
+                    'time' => $timeStr,
+                    'text' => $text,
+                    'date' => $dateStr,
+                ];
+            }
+        }
+
+        return $commentsList;
     }
 
     /**

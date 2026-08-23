@@ -5,6 +5,7 @@ namespace App\Services\Collection;
 use App\DTOs\Analytics\DiscoveredChannelDto;
 use App\DTOs\Analytics\GlobalPostDto;
 use App\Factories\CustomMadelineProtoFactory;
+use App\Repositories\Post\Contracts\PostRepositoryInterface;
 use App\Repositories\Source\Contracts\SourceRepositoryInterface;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -14,6 +15,7 @@ class TelegramDiscoveryService
     public function __construct(
         private readonly CustomMadelineProtoFactory $madelineProtoFactory,
         private readonly SourceRepositoryInterface $sourceRepository,
+        private readonly PostRepositoryInterface $postRepository,
     ) {}
 
     /**
@@ -263,6 +265,36 @@ class TelegramDiscoveryService
             Log::warning('Telegram searchGlobal error: '.$e->getMessage());
         }
 
+        // Merge recent local posts so fresh news Telegram's flaky searchGlobal
+        // misses still surface (local collection runs hourly).
+        if ($sinceHours !== null && $sinceHours > 0) {
+            $localPosts = $this->postRepository->searchByText($query, $limit * 3, Carbon::now()->subHours($sinceHours), $minViews);
+
+            foreach ($localPosts as $post) {
+                $username = (string) ($post->source?->username ?? '');
+                $cleanUsername = ltrim($username, '@');
+                $url = $post->url ?? ($cleanUsername !== '' ? "https://t.me/{$cleanUsername}/{$post->external_id}" : '');
+
+                if ($url === '' || isset($postsMap[$url])) {
+                    continue;
+                }
+
+                $postsMap[$url] = [
+                    'id' => $post->external_id,
+                    'channel_username' => $username !== '' && ! str_starts_with($username, '@') ? '@'.$username : $username,
+                    'channel_title' => $post->source?->title,
+                    'url' => $url,
+                    'published_at' => $post->published_at?->toDateTimeString(),
+                    'text' => (string) ($post->text ?? ''),
+                    'views' => (int) $post->views,
+                    'forwards' => (int) $post->forwards,
+                    'reactions' => (int) $post->reactions,
+                    'er' => (float) $post->er,
+                    'content_score' => (float) $post->content_score,
+                ];
+            }
+        }
+
         // Relevance ranking
         $queryTokens = $this->extractMeaningfulTokens($query);
         $scoredPosts = [];
@@ -276,7 +308,11 @@ class TelegramDiscoveryService
                 }
             }
 
-            $relevanceScore = ($tokenMatches * 1000) + ($post['views'] * 0.1) + ($post['content_score'] * 10);
+            $ageHours = $post['published_at'] !== null
+                ? (int) Carbon::now()->diffInHours(Carbon::parse($post['published_at']))
+                : 1000;
+            $recencyBoost = max(0, 24 - $ageHours) * 50; // ponytail: 24h window, linear decay
+            $relevanceScore = ($tokenMatches * 1000) + ($post['views'] * 0.1) + ($post['content_score'] * 10) + $recencyBoost;
             $scoredPosts[] = [
                 'post' => $post,
                 'score' => $relevanceScore,

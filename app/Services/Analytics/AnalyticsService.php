@@ -141,7 +141,7 @@ class AnalyticsService
     /**
      * @return array<string, mixed>
      */
-    public function getPostComments(string|int $idOrUrl, int $limit = 20): array
+    public function getPostComments(string|int $idOrUrl, int $limit = 20, ?int $offsetId = null, ?int $sinceId = null): array
     {
         $channel = null;
         $externalId = null;
@@ -182,7 +182,77 @@ class AnalyticsService
             ];
         }
 
-        return $this->collectionService->fetchPostComments($channel, $externalId, $limit);
+        return $this->collectionService->fetchPostComments($channel, $externalId, $limit, $offsetId, $sinceId);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function getCommentIntelligence(string|int $idOrUrl, int $maxComments = 200): array
+    {
+        $commentsResult = $this->getPostComments($idOrUrl, $maxComments);
+
+        if (! empty($commentsResult['error'])) {
+            return $commentsResult;
+        }
+
+        $texts = [];
+        foreach ($commentsResult['comments'] ?? [] as $comment) {
+            $text = trim((string) ($comment['text'] ?? ''));
+            if ($text !== '') {
+                $texts[] = mb_strtolower($text);
+            }
+        }
+
+        // ponytail: keyword heuristics for RU comment mining; swap for NER/LLM
+        // when the channel set grows past a hand-tuned list.
+        $districtKeywords = ['район', 'р-н', 'центр', 'западный', 'восточный', 'северный', 'южный', 'чмр', 'смр', 'юмр', 'фмр', 'гмр', 'кмр'];
+        $complaintKeywords = ['проблем', 'сбой', 'не работает', 'ошибк', 'ужас', 'плохо', 'бед', 'не могу', 'вору', 'обман', 'кинул', 'дорого', 'тормоз', 'висит', 'отключ', 'перебо', 'жалоб', 'не пришл', 'не достав', 'сломан', 'баг'];
+
+        $districts = [];
+        $complaints = [];
+        $complaintExamples = [];
+
+        foreach ($texts as $text) {
+            foreach ($districtKeywords as $keyword) {
+                if (str_contains($text, $keyword)) {
+                    $districts[$keyword] = ($districts[$keyword] ?? 0) + 1;
+                }
+            }
+
+            foreach ($complaintKeywords as $keyword) {
+                if (str_contains($text, $keyword)) {
+                    $complaints[$keyword] = ($complaints[$keyword] ?? 0) + 1;
+                    $complaintExamples[$keyword][] = mb_substr($text, 0, 120);
+                }
+            }
+        }
+
+        arsort($districts);
+        arsort($complaints);
+
+        $topDistricts = [];
+        foreach (array_slice($districts, 0, 10, true) as $name => $mentions) {
+            $topDistricts[] = ['district' => $name, 'mentions' => $mentions];
+        }
+
+        $topComplaints = [];
+        foreach (array_slice($complaints, 0, 10, true) as $name => $mentions) {
+            $topComplaints[] = [
+                'complaint' => $name,
+                'mentions' => $mentions,
+                'example' => $complaintExamples[$name][0] ?? null,
+            ];
+        }
+
+        return [
+            'channel' => $commentsResult['channel'] ?? null,
+            'post_id' => $commentsResult['post_id'] ?? null,
+            'total_comments' => $commentsResult['total_comments'] ?? 0,
+            'analyzed_comments' => count($texts),
+            'top_districts' => $topDistricts,
+            'dominant_complaints' => $topComplaints,
+        ];
     }
 
     /**
